@@ -1,0 +1,15 @@
+[project]
+name = "roundtable"
+version = "0.1.0"
+description = "圆桌会议 (Roundtable Meeting) — AI 专家圆桌工作台后端"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
