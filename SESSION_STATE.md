@@ -1,27 +1,58 @@
-# Session State Checkpoint
+# Session State — 续接点
 
-**Progress:** Phase 0-3 of 6 complete (~65%)
-**Repo:** kquuen/roundtable-backend
-**Last commit:** 729422d [Phase 3]
+**时间：** 2026-05-21
+**仓库：** kquuen/roundtable-backend
+**最新 commit：** 97ffe90 [Phase 6]
 
-## Done
-- Phase 0: 8 Pydantic models + 12 tests
-- Phase 1: Evidence Builder (TranscriptChunker + EvidencePacket) + 8 tests
-- Phase 2: Skill Registry (5 skills) + 5 Agents + Orchestrator + 9 tests
-- Phase 3: Supervisor (4-tier review) + Report Composer (10 sections) + main.py pipeline + 6 tests
+## 已完成（6/6 Phase）
 
-## Files
+| Phase | 内容 | 单测 |
+|-------|------|------|
+| 0 | 8 个 Pydantic 协议模型 | 12 ✅ |
+| 1 | 证据底座 (Chunker + Builder) | 20 ✅ |
+| 2 | Skill Registry + 5 Agent + Orchestrator | 29 ✅ |
+| 3 | Supervisor + Report Composer + main.py | 35 ✅ |
+| 4 | Team Builder (分类 + 4 队伍) | 45 ✅ |
+| 5 | FastAPI + Provider Adapter | 54 ✅ |
+| 6 | README + Docker + Release v0.1.0 | 54 ✅ |
+
+## 项目结构
+
 ```
-roundtable/
-  models.py, evidence.py, skills.py, agents.py, orchestrator.py,
-  supervisor.py, report.py, main.py
-tests/
-  test_models.py, test_evidence.py, test_agents.py, test_supervisor.py
-data/
-  sample_transcript.json
+roundtable-backend/
+├── roundtable/
+│   ├── models.py, evidence.py, skills.py
+│   ├── agents.py, orchestrator.py
+│   ├── supervisor.py, report.py
+│   ├── team.py, main.py, app.py, providers.py
+├── tests/ (6 files, 54 tests)
+├── data/sample_transcript.json
+├── README.md, docker-compose.yml, SESSION_STATE.md
 ```
 
-## Next
-- Phase 4: Team Builder (SessionClassifier + TeamTemplateEngine)
-- Phase 5: FastAPI + Provider Adapter
-- Phase 6: Docker + README + Release
+## 下次从哪继续
+
+### 立即可做的
+- [ ] Agent 接入真实 LLM（替换规则引擎为 DeepSeek API）
+- [ ] Provider Adapter 实现 httpx 真实调用
+- [ ] main.py 支持自定义文本输入
+
+### 中期
+- [ ] PostgreSQL schema + Alembic migrations
+- [ ] ASR API 接入
+- [ ] Redis 任务队列
+
+### 远期
+- [ ] Tauri 前端
+- [ ] 全量 131 Skill 仓库
+- [ ] 知识图谱 + 向量库
+
+## 运行命令
+
+```bash
+cd Desktop\会议助手\roundtable-backend
+$env:PYTHONPATH = pwd
+python -m pytest tests -v
+python -m roundtable.main
+uvicorn roundtable.app:app --reload
+```
