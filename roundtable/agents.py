@@ -1,30 +1,125 @@
 """Phase 2: Agent base class and built-in expert agents.
 
-POC mode: uses rule-engine simulation instead of real LLM calls.
-Production mode: replace analyze() with LLM API call.
+Supports both real LLM (via ProviderAdapter) and mock mode for testing.
 """
 
 from __future__ import annotations
 
+import asyncio
+from typing import Optional
+
 from roundtable.models import (
     AgentReview, EvidenceClaim, EvidencePacket, ClaimType, SkillManifest,
+)
+from roundtable.providers import (
+    ProviderAdapter, build_agent_prompt, parse_agent_response,
 )
 from roundtable.skills import load_skill
 
 
 class Agent:
-    """Base agent class. Subclasses define analysis logic per role."""
+    """Base agent class.
 
-    def __init__(self, skill_id: str):
+    When a ProviderAdapter is injected, uses real LLM for analysis.
+    When provider is None, falls back to mock keyword-based analysis.
+    """
+
+    def __init__(self, skill_id: str, provider: ProviderAdapter | None = None):
         self.skill: SkillManifest = load_skill(skill_id)
+        self.provider = provider
 
     @property
     def agent_id(self) -> str:
         return self.skill.skill_id
 
     def analyze(self, evidence: EvidencePacket) -> AgentReview:
-        """Override in subclass to implement expert analysis."""
-        raise NotImplementedError
+        """Synchronous entry point. Delegates to async or mock path."""
+        if self.provider is not None:
+            return asyncio.run(self.analyze_async(evidence))
+        return self._analyze_mock(evidence)
+
+    async def analyze_async(self, evidence: EvidencePacket) -> AgentReview:
+        """Async analysis using LLM provider."""
+        system_prompt, user_message = build_agent_prompt(self.skill, evidence)
+
+        raw = await self.provider.chat(
+            system_prompt=system_prompt,
+            user_message=user_message,
+            max_tokens=2000,
+        )
+
+        parsed, error = parse_agent_response(raw, self.agent_id, evidence)
+        if error:
+            return AgentReview(
+                agent_id=self.agent_id,
+                summary=f"LLM 响应解析失败：{error}",
+                claims=[],
+                open_questions=["LLM 输出格式异常，请重试"],
+                recommended_next_actions=["检查 API 响应格式"],
+            )
+
+        return self._dict_to_review(parsed, evidence)
+
+    def _dict_to_review(
+        self, data: dict, evidence: EvidencePacket
+    ) -> AgentReview:
+        """Convert parsed JSON dict to AgentReview with proper types."""
+        valid_chunk_ids = {c.chunk_id for c in evidence.transcript_chunks}
+        chunk_text_map = {c.chunk_id: c.text for c in evidence.transcript_chunks}
+
+        claims = []
+        for i, c in enumerate(data.get("claims", [])):
+            # Determine evidence_ids
+            evidence_ids = []
+            evidence_text = c.get("evidence_text", "")
+            if evidence_text:
+                # Try to find which chunk contains this evidence text
+                for cid, ctext in chunk_text_map.items():
+                    if evidence_text[:30] in ctext or ctext[:30] in evidence_text:
+                        evidence_ids.append(cid)
+                        break
+                # If no match found, still store the text for later review
+                if not evidence_ids and evidence_text.strip():
+                    evidence_ids = []  # supervisor will handle missing evidence
+
+            # Map claim_type
+            raw_type = c.get("claim_type", "inference")
+            try:
+                claim_type = ClaimType(raw_type)
+            except ValueError:
+                claim_type = ClaimType.INFERENCE
+
+            claim = EvidenceClaim(
+                claim_id=f"c_{self.agent_id}_{i:03d}",
+                agent_id=self.agent_id,
+                claim_type=claim_type,
+                content=c.get("content", ""),
+                evidence_ids=evidence_ids,
+                confidence=float(c.get("confidence", 0.5)),
+            )
+            claims.append(claim)
+
+        return AgentReview(
+            agent_id=self.agent_id,
+            summary=data.get("summary", f"{self.skill.name} 分析完成"),
+            claims=claims,
+            open_questions=data.get("open_questions", []),
+            recommended_next_actions=data.get("recommended_next_actions", []),
+        )
+
+    # ── Mock analysis (keyword-based, no LLM required) ──
+
+    def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
+        """Keyword-based mock analysis. Used when no provider is configured.
+
+        Subclasses may override this for role-specific keyword logic.
+        Default: generic keyword detection.
+        """
+        raise NotImplementedError(
+            f"Agent '{self.agent_id}' has no mock analysis implementation "
+            f"and no ProviderAdapter configured. "
+            f"Either inject a ProviderAdapter or override _analyze_mock()."
+        )
 
 
 # ── Built-in agents ──
@@ -33,14 +128,12 @@ class Agent:
 class ProductManager(Agent):
     """Product strategy analysis agent."""
 
-    def __init__(self):
-        super().__init__("product_manager")
+    def __init__(self, provider: ProviderAdapter | None = None):
+        super().__init__("product_manager", provider=provider)
 
-    def analyze(self, evidence: EvidencePacket) -> AgentReview:
+    def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
         chunks = evidence.transcript_chunks
         claims = []
-
-        # Identify product decisions from evidence
         decision_keywords = ["决定", "确定", "先做", "不做", "只做", "改为"]
         for c in chunks:
             for kw in decision_keywords:
@@ -54,8 +147,6 @@ class ProductManager(Agent):
                         confidence=0.90,
                     ))
                     break
-
-        # Always add at least one recommendation
         if claims:
             claims.append(EvidenceClaim(
                 claim_id=f"c_pm_{len(claims):03d}",
@@ -65,7 +156,6 @@ class ProductManager(Agent):
                 evidence_ids=[claims[0].claim_id],
                 confidence=0.78,
             ))
-
         return AgentReview(
             agent_id=self.agent_id,
             summary=f"Identified {len(claims)} product signals from the meeting.",
@@ -78,14 +168,12 @@ class ProductManager(Agent):
 class Architect(Agent):
     """Technical architecture analysis agent."""
 
-    def __init__(self):
-        super().__init__("architect")
+    def __init__(self, provider: ProviderAdapter | None = None):
+        super().__init__("architect", provider=provider)
 
-    def analyze(self, evidence: EvidencePacket) -> AgentReview:
+    def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
         chunks = evidence.transcript_chunks
         claims = []
-
-        # Identify technical decisions
         tech_keywords = ["协议", "后端", "前端", "数据库", "API", "并发", "成本", "token", "Agent"]
         for c in chunks:
             for kw in tech_keywords:
@@ -99,7 +187,6 @@ class Architect(Agent):
                         confidence=0.85,
                     ))
                     break
-
         if claims:
             claims.append(EvidenceClaim(
                 claim_id=f"c_arch_{len(claims):03d}",
@@ -109,7 +196,6 @@ class Architect(Agent):
                 evidence_ids=[],
                 confidence=0.80,
             ))
-
         return AgentReview(
             agent_id=self.agent_id,
             summary=f"Found {len(claims)} technical signals and provided architecture recommendations.",
@@ -122,10 +208,10 @@ class Architect(Agent):
 class ProjectManager(Agent):
     """Project execution planning agent."""
 
-    def __init__(self):
-        super().__init__("project_manager")
+    def __init__(self, provider: ProviderAdapter | None = None):
+        super().__init__("project_manager", provider=provider)
 
-    def analyze(self, evidence: EvidencePacket) -> AgentReview:
+    def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
         return AgentReview(
             agent_id=self.agent_id,
             summary="This meeting did not explicitly set timelines, but the direction implies a 10-12 week MVP cycle.",
@@ -147,10 +233,10 @@ class ProjectManager(Agent):
 class BusinessAnalyst(Agent):
     """Business analysis agent."""
 
-    def __init__(self):
-        super().__init__("business_analyst")
+    def __init__(self, provider: ProviderAdapter | None = None):
+        super().__init__("business_analyst", provider=provider)
 
-    def analyze(self, evidence: EvidencePacket) -> AgentReview:
+    def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
         return AgentReview(
             agent_id=self.agent_id,
             summary="The product pivot from meeting notes to AI expert roundtable is a strong differentiator.",
@@ -180,10 +266,10 @@ class BusinessAnalyst(Agent):
 class SupervisorAgent(Agent):
     """Fact-checking supervisor agent (not the final Supervisor module)."""
 
-    def __init__(self):
-        super().__init__("supervisor")
+    def __init__(self, provider: ProviderAdapter | None = None):
+        super().__init__("supervisor", provider=provider)
 
-    def analyze(self, evidence: EvidencePacket) -> AgentReview:
+    def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
         return AgentReview(
             agent_id=self.agent_id,
             summary="Supervisor agent confirms: this POC run is valid. All claims should go through the review module.",

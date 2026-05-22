@@ -1,30 +1,70 @@
 """Phase 5: FastAPI application — REST API for roundtable operations.
 
-Usage: uvicorn roundtable.app:app --reload
+v0.3.0: JSON file persistence via store.py + report archiving.
+
+Usage:
+    $env:DEEPSEEK_API_KEY="sk-..."   # PowerShell
+    uvicorn roundtable.app:app --reload
 """
 
 from __future__ import annotations
 
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from roundtable.models import (
-    Session, SessionMode, SessionStatus,
-)
+from roundtable.models import SessionStatus, SessionMode
 from roundtable.evidence import build_evidence_packet
-from roundtable.orchestrator import run_orchestrator
+from roundtable.orchestrator import run_orchestrator_async
 from roundtable.supervisor import review_claims
 from roundtable.report import compose_report
 from roundtable.team import classify_session, recommend_teams
+from roundtable.providers import get_provider, ProviderAdapter
+from roundtable.store import SessionStore, ReportStore
+from roundtable.memory import MemoryStore
+
+# ── Persistence stores (survive restarts) ──
+
+_store = SessionStore()
+_reports = ReportStore()
+_memory = MemoryStore()
+
+# Provider — created at startup
+_provider: Optional[ProviderAdapter] = None
+
+
+def _init_provider() -> ProviderAdapter | None:
+    """Initialize the LLM provider from environment."""
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        return None
+    try:
+        return get_provider(provider="deepseek", api_key=api_key)
+    except Exception:
+        return None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _provider
+    _provider = _init_provider()
+    if _provider:
+        print(f"[roundtable] LLM provider initialized: deepseek")
+    else:
+        print("[roundtable] WARNING: DEEPSEEK_API_KEY not set — running in mock mode")
+    print(f"[roundtable] Loaded {_store.session_count()} persisted sessions")
+    yield
 
 app = FastAPI(
     title="圆桌会议 Roundtable API",
-    version="0.1.0",
-    description="AI 专家圆桌工作台后端 API",
+    version="0.3.0",
+    description="AI 专家圆桌工作台后端 API — LLM 驱动 + 持久化",
+    lifespan=lifespan,
 )
-
-# In-memory session store (POC)
-_sessions: dict[str, Session] = {}
 
 
 # ── Request models ──
@@ -42,83 +82,125 @@ class UploadEvidenceRequest(BaseModel):
 class RunRoundtableRequest(BaseModel):
     session_id: str
     agent_count: int = 5
+    use_mock: bool = False
 
 
 # ── Routes ──
 
 @app.get("/")
-def root():
-    return {"service": "roundtable", "version": "0.1.0"}
+async def root():
+    return {
+        "service": "roundtable",
+        "version": "0.3.0",
+        "llm_enabled": _provider is not None,
+        "sessions": _store.session_count(),
+    }
 
 
 @app.post("/session/create", status_code=201)
-def create_session(req: CreateSessionRequest):
-    """Create a new analysis session."""
-    sid = f"s_{len(_sessions) + 1:03d}"
-    session = Session(
-        session_id=sid,
-        mode=SessionMode(req.mode),
-        title=req.title,
-        status=SessionStatus.RECORDING,
-    )
-    _sessions[sid] = session
+async def create_session(req: CreateSessionRequest):
+    """Create a new analysis session (persisted to disk)."""
+    session = _store.create(title=req.title, mode=req.mode)
     return session.model_dump()
 
 
 @app.get("/session/{session_id}")
-def get_session(session_id: str):
+async def get_session(session_id: str):
     """Get session details."""
-    s = _sessions.get(session_id)
+    s = _store.get(session_id)
     if not s:
         raise HTTPException(404, "Session not found")
     return s.model_dump()
 
 
-@app.post("/evidence/upload")
-def upload_evidence(req: UploadEvidenceRequest):
-    """Upload meeting text segments and build evidence packet."""
-    if req.session_id not in _sessions:
+@app.get("/session/{session_id}/reports")
+async def list_reports(session_id: str):
+    """List archived reports for a session."""
+    s = _store.get(session_id)
+    if not s:
         raise HTTPException(404, "Session not found")
-    session = _sessions[req.session_id]
-    evidence = build_evidence_packet(req.session_id, session.mode, req.segments)
-    session.status = SessionStatus.TRANSCRIBING
+    return {
+        "session_id": session_id,
+        "reports": _reports.list_for_session(session_id),
+    }
+
+
+@app.post("/evidence/upload")
+async def upload_evidence(req: UploadEvidenceRequest):
+    """Upload meeting text segments (persisted to session file)."""
+    if not _store.get(req.session_id):
+        raise HTTPException(404, "Session not found — create a session first")
+
+    evidence = build_evidence_packet(req.session_id, "meeting", req.segments)
+    _store.store_evidence(req.session_id, req.segments)
+    _store.update_status(req.session_id, SessionStatus.TRANSCRIBING)
+
     return {
         "session_id": req.session_id,
         "chunk_count": len(evidence.transcript_chunks),
-        "evidence": evidence.model_dump(),
+        "status": "evidence stored — ready for /roundtable/run",
     }
 
 
 @app.post("/roundtable/run")
-def run_roundtable(req: RunRoundtableRequest):
-    """Execute a full roundtable analysis."""
-    if req.session_id not in _sessions:
-        raise HTTPException(404, "Session not found")
-    session = _sessions[req.session_id]
+async def run_roundtable(req: RunRoundtableRequest):
+    """Execute a full roundtable analysis using stored evidence.
 
-    # For demo: use hardcoded sample segments
-    from pathlib import Path
-    import json
-    data_path = Path(__file__).resolve().parent.parent / "data" / "sample_transcript.json"
-    if data_path.exists():
-        with open(data_path, encoding="utf-8") as f:
-            data = json.load(f)
-        segments = data.get("segments", [])
-    else:
-        segments = [{"speaker": "Demo", "text": "Test segment"}]
+    Uses evidence uploaded via /evidence/upload.
+    Report is archived to reports/ automatically.
+    """
+    session = _store.get(req.session_id)
+    if not session:
+        raise HTTPException(404, "Session not found — create a session first")
 
-    session.status = SessionStatus.ANALYZING
+    # Use stored evidence, or fall back to sample data
+    segments = _store.get_evidence(req.session_id)
+    if not segments:
+        import json
+        data_path = Path(__file__).resolve().parent.parent / "data" / "sample_transcript.json"
+        if data_path.exists():
+            segments = json.loads(data_path.read_text(encoding="utf-8")).get("segments", [])
+        else:
+            segments = [{"speaker": "Demo", "text": "Test segment — no evidence uploaded."}]
+
+    _store.update_status(req.session_id, SessionStatus.ANALYZING)
     evidence = build_evidence_packet(req.session_id, session.mode, segments)
-    agent_reviews = run_orchestrator(evidence, agent_count=req.agent_count)
-    reviews = review_claims(agent_reviews, evidence, mode=session.mode)
-    report = compose_report(agent_reviews, reviews, session_title=session.title)
-    session.status = SessionStatus.COMPLETED
 
-    return {"session_id": req.session_id, "report": report}
+    # Choose provider: use LLM unless mock forced or unavailable
+    provider = None if req.use_mock else _provider
+
+    # Run agents (async concurrent)
+    agent_reviews = await run_orchestrator_async(
+        evidence,
+        agent_count=req.agent_count,
+        provider=provider,
+    )
+
+    # Supervisor review
+    reviews = review_claims(agent_reviews, evidence, mode=session.mode, provider=provider)
+
+    # Write approved high-confidence claims to memory
+    memories_written = _memory.write_from_reviews(req.session_id, agent_reviews, reviews)
+
+    # Compose report
+    report = compose_report(agent_reviews, reviews, session_title=session.title)
+
+    _store.update_status(req.session_id, SessionStatus.COMPLETED)
+
+    # Archive report
+    report_path = _reports.save(req.session_id, session.title or "Untitled", report)
+
+    return {
+        "session_id": req.session_id,
+        "mode": "llm" if provider else "mock",
+        "report_path": str(report_path),
+        "memories_written": len(memories_written),
+        "report": report,
+    }
 
 
 @app.post("/team/recommend")
-def recommend_team(req: UploadEvidenceRequest):
+async def recommend_team(req: UploadEvidenceRequest):
     """Recommend expert teams based on session content."""
     evidence = build_evidence_packet(req.session_id, "meeting", req.segments)
     session_type = classify_session(evidence)
@@ -132,6 +214,32 @@ def recommend_team(req: UploadEvidenceRequest):
     }
 
 
+# ── Memory ──
+
+@app.get("/memory/{session_id}")
+async def get_memory(session_id: str):
+    """Get auto-written memory entries for a session."""
+    entries = _memory.get(session_id)
+    return {
+        "session_id": session_id,
+        "entry_count": len(entries),
+        "entries": entries,
+    }
+
+
+@app.get("/memory/search")
+async def search_memory(q: str = "", limit: int = 20):
+    """Keyword search across all memory entries."""
+    if not q:
+        return {"results": [], "query": ""}
+    results = _memory.search(q, limit=limit)
+    return {"query": q, "result_count": len(results), "results": results}
+
+
 @app.get("/health")
-def health_check():
-    return {"status": "ok", "sessions": len(_sessions)}
+async def health_check():
+    return {
+        "status": "ok",
+        "sessions": _store.session_count(),
+        "llm_enabled": _provider is not None,
+    }
