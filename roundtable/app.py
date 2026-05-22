@@ -19,13 +19,12 @@ from pydantic import BaseModel
 
 from roundtable.models import SessionStatus, SessionMode
 from roundtable.evidence import build_evidence_packet
-from roundtable.orchestrator import run_orchestrator_async
-from roundtable.supervisor import review_claims
-from roundtable.report import compose_report
 from roundtable.team import classify_session, recommend_teams
 from roundtable.providers import get_provider, ProviderAdapter
 from roundtable.store import SessionStore, ReportStore
 from roundtable.memory import MemoryStore
+from roundtable.services import RoundtableService
+from roundtable.skills import load_from_directory, reload_skills, list_skills
 
 # ── Persistence stores (survive restarts) ──
 
@@ -35,6 +34,9 @@ _memory = MemoryStore()
 
 # Provider — created at startup
 _provider: Optional[ProviderAdapter] = None
+
+# Service — unified pipeline orchestrator
+_service: Optional[RoundtableService] = None
 
 
 def _init_provider() -> ProviderAdapter | None:
@@ -48,15 +50,39 @@ def _init_provider() -> ProviderAdapter | None:
         return None
 
 
+def _get_service(provider: ProviderAdapter | None = None) -> RoundtableService:
+    """Get or create the service singleton (lazy-init for tests)."""
+    global _service
+    if _service is None:
+        _service = RoundtableService(
+            provider=provider or _provider,
+            session_store=_store,
+            report_store=_reports,
+            memory_store=_memory,
+        )
+    elif provider is not None and _service.provider is None:
+        # Update provider if it was None before (e.g., lifespan ran without API key)
+        _service.provider = provider
+    return _service
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _provider
+    global _provider, _service
     _provider = _init_provider()
     if _provider:
         print(f"[roundtable] LLM provider initialized: deepseek")
     else:
         print("[roundtable] WARNING: DEEPSEEK_API_KEY not set — running in mock mode")
     print(f"[roundtable] Loaded {_store.session_count()} persisted sessions")
+
+    # Load YAML skills from skills/ directory
+    yaml_loaded = load_from_directory()
+    if yaml_loaded:
+        print(f"[roundtable] Loaded {yaml_loaded} YAML skills from skills/")
+
+    _get_service(_provider)
+
     yield
 
 app = FastAPI(
@@ -164,38 +190,27 @@ async def run_roundtable(req: RunRoundtableRequest):
             segments = [{"speaker": "Demo", "text": "Test segment — no evidence uploaded."}]
 
     _store.update_status(req.session_id, SessionStatus.ANALYZING)
-    evidence = build_evidence_packet(req.session_id, session.mode, segments)
 
-    # Choose provider: use LLM unless mock forced or unavailable
+    # Delegate to Service Layer
     provider = None if req.use_mock else _provider
+    svc = _get_service(provider)
 
-    # Run agents (async concurrent)
-    agent_reviews = await run_orchestrator_async(
-        evidence,
+    result = await svc.run_pipeline(
+        session_id=req.session_id,
+        segments=segments,
+        mode=session.mode,
+        title=session.title,
         agent_count=req.agent_count,
-        provider=provider,
     )
-
-    # Supervisor review
-    reviews = review_claims(agent_reviews, evidence, mode=session.mode, provider=provider)
-
-    # Write approved high-confidence claims to memory
-    memories_written = _memory.write_from_reviews(req.session_id, agent_reviews, reviews)
-
-    # Compose report
-    report = compose_report(agent_reviews, reviews, session_title=session.title)
 
     _store.update_status(req.session_id, SessionStatus.COMPLETED)
 
-    # Archive report
-    report_path = _reports.save(req.session_id, session.title or "Untitled", report)
-
     return {
-        "session_id": req.session_id,
-        "mode": "llm" if provider else "mock",
-        "report_path": str(report_path),
-        "memories_written": len(memories_written),
-        "report": report,
+        "session_id": result.session_id,
+        "mode": result.mode,
+        "report_path": result.report_path,
+        "memories_written": result.memories_written,
+        "report": result.report,
     }
 
 
@@ -234,6 +249,24 @@ async def search_memory(q: str = "", limit: int = 20):
         return {"results": [], "query": ""}
     results = _memory.search(q, limit=limit)
     return {"query": q, "result_count": len(results), "results": results}
+
+
+@app.post("/skills/reload")
+async def reload_skills_endpoint():
+    """Hot-reload skill definitions from skills/ directory."""
+    result = reload_skills()
+    return {
+        "status": "reloaded",
+        "skills_loaded": result["loaded"],
+        "total_skills": result["total"],
+        "skill_ids": result["skill_ids"],
+    }
+
+
+@app.get("/skills")
+async def list_skills_endpoint():
+    """List all registered skill IDs."""
+    return {"skill_ids": list_skills(), "total": len(list_skills())}
 
 
 @app.get("/health")

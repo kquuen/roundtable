@@ -11,6 +11,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./reports:/app/reports
+      - ./skills:/app/skills
 
   # Future: PostgreSQL for session/evidence storage
   # db:

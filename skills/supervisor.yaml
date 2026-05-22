@@ -1,0 +1,16 @@
+# 主审查官 — Supervisor Agent Skill
+skill_id: supervisor
+name: 主审查官
+version: 1.0.0
+role: fact_checking
+allowed_claim_types:
+  - inference
+allowed_domains:
+  - fact_verification
+  - evidence_checking
+  - claim_classification
+forbidden:
+  - 提出新的专家建议
+  - 越界进行产品策略判断
+input_schema: EvidencePacket
+output_schema: AgentReview

@@ -14,7 +14,6 @@ from roundtable.models import (
     AgentReview, ClaimType, EvidenceClaim, EvidencePacket,
     SupervisorReview, ReviewResult,
 )
-from roundtable.skills import load_skill, BUILTIN_SKILLS
 
 
 def review_claims(
@@ -22,6 +21,7 @@ def review_claims(
     evidence: EvidencePacket,
     mode: str = "meeting",
     provider=None,  # Optional[ProviderAdapter] for LLM-based checks
+    agent_forbidden: dict[str, list[str]] | None = None,
 ) -> list[SupervisorReview]:
     """审查所有 claim，按证据绑定规则 + forbidden 规则做裁决。
 
@@ -43,8 +43,9 @@ def review_claims(
             r = _review_single_claim(claim, valid_chunk_ids, mode)
 
             # Step 2: Forbidden rule check (overrides approval if violated)
-            if r.review_result == ReviewResult.APPROVED:
-                fb_result = _check_forbidden(claim, ar.agent_id)
+            if r.review_result == ReviewResult.APPROVED and agent_forbidden:
+                forbidden = agent_forbidden.get(ar.agent_id, [])
+                fb_result = _check_forbidden(claim, forbidden)
                 if fb_result:
                     r = fb_result
 
@@ -127,19 +128,13 @@ def _review_single_claim(
 
 def _check_forbidden(
     claim: EvidenceClaim,
-    agent_id: str,
+    forbidden: list[str],
 ) -> SupervisorReview | None:
-    """Check if a claim violates its agent's forbidden rules.
+    """Check if a claim violates the agent's forbidden rules.
 
-    Uses heuristic keyword matching for the built-in forbidden rules.
+    Uses heuristic keyword matching against the provided forbidden rule list.
     Returns a REJECTED review if violated, None if clean.
     """
-    try:
-        skill = load_skill(agent_id)
-    except KeyError:
-        return None  # Unknown agent, skip
-
-    forbidden = skill.forbidden
     if not forbidden:
         return None
 

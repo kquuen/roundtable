@@ -15,58 +15,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import os
 import sys
 from pathlib import Path
 
-from roundtable.evidence import build_evidence_packet
-from roundtable.orchestrator import run_orchestrator, run_orchestrator_async
-from roundtable.supervisor import review_claims, summarize_review
-from roundtable.report import compose_report
-from roundtable.providers import get_provider, ProviderAdapter
-
-
-def run_pipeline(
-    segments: list[dict],
-    session_id: str = "s_001",
-    mode: str = "meeting",
-    title: str = "",
-    agent_count: int = 5,
-    provider: ProviderAdapter | None = None,
-) -> str:
-    """Run the full roundtable pipeline end-to-end.
-
-    Args:
-        segments: Meeting text segments [{"speaker": "...", "text": "..."}]
-        session_id: Session identifier
-        mode: "meeting" or "personal_roundtable"
-        title: Meeting title
-        agent_count: Number of agents (1-5)
-        provider: LLM provider (None = mock mode)
-
-    Returns:
-        Markdown report string
-    """
-    # 1. Evidence
-    evidence = build_evidence_packet(session_id, mode, segments)
-
-    # 2. Agent analysis
-    if provider is not None:
-        agent_reviews = asyncio.run(
-            run_orchestrator_async(evidence, agent_count=agent_count, provider=provider)
-        )
-    else:
-        agent_reviews = run_orchestrator(evidence, agent_count=agent_count)
-
-    # 3. Supervisor review (with LLM contradiction detection if provider available)
-    supervisor_reviews = review_claims(agent_reviews, evidence, mode=mode, provider=provider)
-
-    # 4. Report
-    report = compose_report(agent_reviews, supervisor_reviews, session_title=title)
-
-    return report
+from roundtable.providers import get_provider
+from roundtable.services import RoundtableService
 
 
 def main():

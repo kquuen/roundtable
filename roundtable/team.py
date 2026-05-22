@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import re
+from typing import Optional
+
 from roundtable.models import EvidencePacket, TeamTemplate
+from roundtable.providers import ProviderAdapter
 
 
 # ── Built-in team templates ──
@@ -67,14 +73,106 @@ BUILTIN_TEAMS: list[TeamTemplate] = [
 ]
 
 
-def classify_session(evidence: EvidencePacket) -> str:
-    """Classify a session based on transcript content keywords.
+def classify_session(
+    evidence: EvidencePacket,
+    provider: Optional[ProviderAdapter] = None,
+) -> str:
+    """Classify a session based on transcript content.
+
+    When provider is available, uses LLM for semantic classification.
+    Falls back to keyword matching when provider is None.
 
     Returns:
         Session type name: "探索", "产品", "技术", "个人"
     """
+    if provider is not None:
+        try:
+            return asyncio.run(_classify_with_llm(evidence, provider))
+        except Exception:
+            pass  # Fall through to keyword fallback
+
+    return _classify_with_keywords(evidence)
+
+
+async def classify_session_async(
+    evidence: EvidencePacket,
+    provider: ProviderAdapter,
+) -> str:
+    """Async classification — always uses LLM."""
+    return await _classify_with_llm(evidence, provider)
+
+
+# ── LLM-based classification ──
+
+async def _classify_with_llm(
+    evidence: EvidencePacket,
+    provider: ProviderAdapter,
+) -> str:
+    """Use LLM to semantically classify the session type."""
     text = " ".join(c.text for c in evidence.transcript_chunks)
-    text_lower = text.lower()
+
+    if evidence.mode == "personal_roundtable":
+        return "个人"
+
+    # Truncate to ~2000 chars to stay within token budget
+    text = text[:2000]
+
+    system = (
+        "You are a session classifier. Classify the meeting transcript into "
+        "one of these types:\n"
+        '- "技术" (technical) — architecture, backend, frontend, protocols, performance\n'
+        '- "产品" (product) — user needs, features, UX, design, product strategy\n'
+        '- "探索" (exploration) — brainstorming, open-ended discussion, ideation\n'
+        '- "个人" (personal) — solo thoughts, creative writing, personal reflection\n\n'
+        "Return ONLY a JSON object: {\"type\": \"...\", \"confidence\": 0.0-1.0, \"reason\": \"...\"}"
+    )
+
+    raw = await provider.chat(
+        system_prompt=system,
+        user_message=f"Classify this transcript:\n\n{text}",
+        max_tokens=200,
+        temperature=0.1,
+    )
+
+    return _parse_classification(raw)
+
+
+def _parse_classification(raw: str) -> str:
+    """Parse LLM classification response. Returns the type string."""
+    valid_types = {"技术", "产品", "探索", "个人"}
+    cleaned = raw.strip()
+
+    # Try JSON parse
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict) and data.get("type") in valid_types:
+            return data["type"]
+    except json.JSONDecodeError:
+        pass
+
+    # Try regex extraction
+    match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            if isinstance(data, dict) and data.get("type") in valid_types:
+                return data["type"]
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback: keyword match on raw response
+    for t in valid_types:
+        if t in cleaned:
+            return t
+
+    return "探索"
+
+
+# ── Keyword-based fallback ──
+
+def _classify_with_keywords(evidence: EvidencePacket) -> str:
+    """Keyword-based session classification (original algorithm)."""
+    text = " ".join(c.text for c in evidence.transcript_chunks)
 
     if evidence.mode == "personal_roundtable":
         return "个人"

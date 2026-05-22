@@ -15,6 +15,7 @@ from roundtable.providers import (
     ProviderAdapter, build_agent_prompt, parse_agent_response,
 )
 from roundtable.skills import load_skill
+from roundtable.linker import EvidenceLinker
 
 
 class Agent:
@@ -58,29 +59,77 @@ class Agent:
                 recommended_next_actions=["检查 API 响应格式"],
             )
 
-        return self._dict_to_review(parsed, evidence)
+        # Resolve evidence_text → chunk_id via semantic linker
+        evidence_map = await self._link_evidence(parsed, evidence)
+
+        return self._dict_to_review(parsed, evidence, evidence_map)
+
+    async def _link_evidence(
+        self, parsed: dict, evidence: EvidencePacket
+    ) -> dict[int, list[str]]:
+        """Resolve evidence_text references to chunk_ids using EvidenceLinker.
+
+        Collects all evidence_text strings from parsed claims,
+        runs semantic matching, and returns claim_index → chunk_ids map.
+        """
+        claims_data = parsed.get("claims", [])
+        evidence_texts: list[str] = []
+        text_indices: list[int] = []
+
+        for i, c in enumerate(claims_data):
+            et = c.get("evidence_text", "")
+            if et and et.strip():
+                evidence_texts.append(et.strip())
+                text_indices.append(i)
+
+        if not evidence_texts:
+            return {}
+
+        linker = EvidenceLinker(provider=self.provider)
+        chunks = evidence.transcript_chunks
+
+        # Use async link (LLM) when provider available, sync fallback otherwise
+        if self.provider is not None:
+            results = await linker.link(evidence_texts, list(chunks))
+        else:
+            results = linker.link_sync(evidence_texts, list(chunks))
+
+        # Build claim_index → chunk_ids map
+        evidence_map: dict[int, list[str]] = {}
+        for j, idx in enumerate(text_indices):
+            if j < len(results):
+                evidence_map[idx] = results[j]
+
+        return evidence_map
 
     def _dict_to_review(
-        self, data: dict, evidence: EvidencePacket
+        self,
+        data: dict,
+        evidence: EvidencePacket,
+        evidence_map: dict[int, list[str]] | None = None,
     ) -> AgentReview:
-        """Convert parsed JSON dict to AgentReview with proper types."""
-        valid_chunk_ids = {c.chunk_id for c in evidence.transcript_chunks}
+        """Convert parsed JSON dict to AgentReview with proper types.
+
+        Uses pre-computed evidence_map (from semantic linker) when available;
+        falls back to naive substring matching otherwise.
+        """
+        if evidence_map is None:
+            evidence_map = {}
+
         chunk_text_map = {c.chunk_id: c.text for c in evidence.transcript_chunks}
 
         claims = []
         for i, c in enumerate(data.get("claims", [])):
-            # Determine evidence_ids
-            evidence_ids = []
-            evidence_text = c.get("evidence_text", "")
-            if evidence_text:
-                # Try to find which chunk contains this evidence text
-                for cid, ctext in chunk_text_map.items():
-                    if evidence_text[:30] in ctext or ctext[:30] in evidence_text:
-                        evidence_ids.append(cid)
-                        break
-                # If no match found, still store the text for later review
-                if not evidence_ids and evidence_text.strip():
-                    evidence_ids = []  # supervisor will handle missing evidence
+            # Determine evidence_ids: prefer linker result, fall back to substring
+            evidence_ids = evidence_map.get(i, [])
+            if not evidence_ids:
+                evidence_text = c.get("evidence_text", "")
+                if evidence_text:
+                    # Fallback: naive substring matching (for mock path)
+                    for cid, ctext in chunk_text_map.items():
+                        if evidence_text[:30] in ctext or ctext[:30] in evidence_text:
+                            evidence_ids.append(cid)
+                            break
 
             # Map claim_type
             raw_type = c.get("claim_type", "inference")

@@ -1,0 +1,19 @@
+# 商业分析 — Business Analyst Skill
+skill_id: business_analyst
+name: 商业分析
+version: 1.0.0
+role: business_analysis
+allowed_claim_types:
+  - inference
+  - recommendation
+  - extension
+allowed_domains:
+  - market
+  - revenue
+  - competition
+  - business_model
+forbidden:
+  - 在没有数据时断言市场规模
+  - 把推测写成确定的市场结论
+input_schema: EvidencePacket
+output_schema: AgentReview

@@ -151,6 +151,19 @@ class RoundtableRun(BaseModel):
     created_at: Optional[datetime] = None
 
 
+# ── Pipeline Result ──
+
+class PipelineResult(BaseModel):
+    """Unified result from a roundtable pipeline run."""
+    session_id: str
+    mode: str = "mock"
+    agent_reviews: list = Field(default_factory=list)
+    supervisor_reviews: list = Field(default_factory=list)
+    report: str = ""
+    report_path: str = ""
+    memories_written: int = 0
+
+
 # ── Team ──
 
 class TeamTemplate(BaseModel):

@@ -11,6 +11,7 @@
 | v0.1.0 | 6 Phase POC：协议模型 + 证据底座 + Skill/Agent(关键词模拟) + Supervisor + Team + FastAPI | 54 ✅ |
 | v0.2.0 | **LLM 驱动引擎**：DeepSeek API 适配器 + Agent 重构 + asyncio 并发 + 证据链路修复 + Dockerfile | 54 ✅ |
 | v0.3.0 | **审查闭环 + 持久化 + 记忆**：forbidden 执行 + 跨 Agent 矛盾检测 + JSON 持久化 + Memory 系统 | 54 ✅ |
+| v0.4.0 | **架构解耦**：Service Layer + Agent Registry + Supervisor 解耦 + EvidenceLinker + Team LLM 分类 + YAML Skill 插件系统 | 54 ✅ |
 
 ## 项目结构
 
@@ -29,7 +30,10 @@ roundtable-backend/
 │   ├── app.py             # FastAPI REST API (持久化+记忆)
 │   ├── providers.py       # LLM Provider Adapter (DeepSeek)
 │   ├── store.py           # JSON 持久化层 (Session/Evidence/Report)
-│   └── memory.py          # Memory 记忆系统
+│   ├── memory.py          # Memory 记忆系统
+│   ├── services.py        # [v0.4.0] Service Layer 统一编排
+│   ├── registry.py        # [v0.4.0] Agent Registry 工厂模式
+│   └── linker.py          # [v0.4.0] EvidenceLinker 语义匹配
 ├── tests/ (6 files, 54 tests)
 ├── data/sample_transcript.json
 ├── AUDIT.md               # 审查条例与修复记录
