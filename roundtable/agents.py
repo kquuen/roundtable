@@ -183,19 +183,34 @@ class ProductManager(Agent):
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
         chunks = evidence.transcript_chunks
         claims = []
-        decision_keywords = ["决定", "确定", "先做", "不做", "只做", "改为"]
+        # Bilingual keywords: Chinese + English
+        decision_keywords = [
+            "决定", "确定", "先做", "不做", "只做", "改为", "优先",
+            "decide", "priority", "mvp", "scope", "defer", "only", "first",
+        ]
         for c in chunks:
             for kw in decision_keywords:
-                if kw in c.text:
+                if kw in c.text.lower():
                     claims.append(EvidenceClaim(
                         claim_id=f"c_pm_{len(claims):03d}",
                         agent_id=self.agent_id,
                         claim_type=ClaimType.FACT,
-                        content=f"Product decision detected: {c.text[:80]}...",
+                        content=f"Product decision detected: {c.text[:80]}",
                         evidence_ids=[c.chunk_id],
                         confidence=0.90,
                     ))
                     break
+        # Fallback: always extract at least one signal from input
+        if not claims and chunks:
+            topics = [c.text[:50] for c in chunks[:3]]
+            claims.append(EvidenceClaim(
+                claim_id="c_pm_000",
+                agent_id=self.agent_id,
+                claim_type=ClaimType.INFERENCE,
+                content=f"Discussion topics identified: {'; '.join(topics)}",
+                evidence_ids=[chunks[0].chunk_id],
+                confidence=0.65,
+            ))
         if claims:
             claims.append(EvidenceClaim(
                 claim_id=f"c_pm_{len(claims):03d}",
@@ -207,7 +222,7 @@ class ProductManager(Agent):
             ))
         return AgentReview(
             agent_id=self.agent_id,
-            summary=f"Identified {len(claims)} product signals from the meeting.",
+            summary=f"Identified {len(claims)} product signal(s) from the meeting.",
             claims=claims,
             open_questions=["Are the MVP priorities aligned with user needs?"],
             recommended_next_actions=["Validate MVP scope with stakeholders."],
@@ -223,19 +238,32 @@ class Architect(Agent):
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
         chunks = evidence.transcript_chunks
         claims = []
-        tech_keywords = ["协议", "后端", "前端", "数据库", "API", "并发", "成本", "token", "Agent"]
+        tech_keywords = [
+            "协议", "后端", "前端", "数据库", "API", "并发", "成本", "token", "Agent",
+            "protocol", "backend", "frontend", "database", "concurrency", "cost", "architecture",
+        ]
         for c in chunks:
             for kw in tech_keywords:
-                if kw in c.text:
+                if kw in c.text.lower():
                     claims.append(EvidenceClaim(
                         claim_id=f"c_arch_{len(claims):03d}",
                         agent_id=self.agent_id,
-                        claim_type=ClaimType.INFERENCE if kw == "Agent" else ClaimType.FACT,
-                        content=f"Technical concern: {kw} - {c.text[:60]}...",
+                        claim_type=ClaimType.INFERENCE if kw.lower() == "agent" else ClaimType.FACT,
+                        content=f"Technical concern: {kw} - {c.text[:60]}",
                         evidence_ids=[c.chunk_id],
                         confidence=0.85,
                     ))
                     break
+        # Fallback: always extract at least one signal
+        if not claims and chunks:
+            claims.append(EvidenceClaim(
+                claim_id="c_arch_000",
+                agent_id=self.agent_id,
+                claim_type=ClaimType.INFERENCE,
+                content=f"Technical context from input: {chunks[0].text[:80]}",
+                evidence_ids=[chunks[0].chunk_id],
+                confidence=0.60,
+            ))
         if claims:
             claims.append(EvidenceClaim(
                 claim_id=f"c_arch_{len(claims):03d}",
@@ -247,7 +275,7 @@ class Architect(Agent):
             ))
         return AgentReview(
             agent_id=self.agent_id,
-            summary=f"Found {len(claims)} technical signals and provided architecture recommendations.",
+            summary=f"Found {len(claims)} technical signal(s) and provided architecture recommendations.",
             claims=claims,
             open_questions=["What is the concurrency limit for agent dispatch?"],
             recommended_next_actions=["Lock down TranscriptChunk and EvidenceClaim protocols."],
@@ -261,19 +289,39 @@ class ProjectManager(Agent):
         super().__init__("project_manager", provider=provider)
 
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
+        chunks = evidence.transcript_chunks
+        claims = []
+        # Detect timeline/scheduling signals
+        timeline_kw = [
+            "周", "天", "月", "排期", "交付", "上线", "发布", "里程碑",
+            "week", "sprint", "phase", "deliver", "milestone", "timeline", "launch",
+        ]
+        for c in chunks:
+            for kw in timeline_kw:
+                if kw in c.text.lower():
+                    claims.append(EvidenceClaim(
+                        claim_id=f"c_pjm_{len(claims):03d}",
+                        agent_id=self.agent_id,
+                        claim_type=ClaimType.FACT,
+                        content=f"Timeline signal: {c.text[:80]}",
+                        evidence_ids=[c.chunk_id],
+                        confidence=0.80,
+                    ))
+                    break
+        # Always add execution recommendation based on input
+        if chunks:
+            claims.append(EvidenceClaim(
+                claim_id=f"c_pjm_{len(claims):03d}",
+                agent_id=self.agent_id,
+                claim_type=ClaimType.RECOMMENDATION,
+                content="Recommend breaking work into 2-week sprints with clear deliverables per phase.",
+                evidence_ids=[],
+                confidence=0.75,
+            ))
         return AgentReview(
             agent_id=self.agent_id,
-            summary="This meeting did not explicitly set timelines, but the direction implies a 10-12 week MVP cycle.",
-            claims=[
-                EvidenceClaim(
-                    claim_id="c_pjm_000",
-                    agent_id=self.agent_id,
-                    claim_type=ClaimType.RECOMMENDATION,
-                    content="Recommend 6-phase delivery: Protocol -> Evidence -> Skills -> Team -> Supervisor -> Report.",
-                    evidence_ids=[],
-                    confidence=0.75,
-                ),
-            ],
+            summary=f"Found {len(claims)} execution signal(s) from the discussion.",
+            claims=claims,
             open_questions=["What is the team size?", "Are there external dependencies?"],
             recommended_next_actions=["Break work into 2-week sprints.", "Set up weekly review checkpoints."],
         )
@@ -286,27 +334,37 @@ class BusinessAnalyst(Agent):
         super().__init__("business_analyst", provider=provider)
 
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
+        chunks = evidence.transcript_chunks
+        claims = []
+        biz_kw = [
+            "用户", "市场", "客户", "收入", "付费", "增长", "竞品", "差异化",
+            "user", "market", "customer", "revenue", "pricing", "growth", "competitor", "differentiat",
+        ]
+        for c in chunks:
+            for kw in biz_kw:
+                if kw in c.text.lower():
+                    claims.append(EvidenceClaim(
+                        claim_id=f"c_ba_{len(claims):03d}",
+                        agent_id=self.agent_id,
+                        claim_type=ClaimType.INFERENCE,
+                        content=f"Business signal ({kw}): {c.text[:80]}",
+                        evidence_ids=[c.chunk_id],
+                        confidence=0.72,
+                    ))
+                    break
+        if claims:
+            claims.append(EvidenceClaim(
+                claim_id=f"c_ba_{len(claims):03d}",
+                agent_id=self.agent_id,
+                claim_type=ClaimType.RECOMMENDATION,
+                content="Target early adopters with highest willingness-to-pay for structured analysis.",
+                evidence_ids=[],
+                confidence=0.70,
+            ))
         return AgentReview(
             agent_id=self.agent_id,
-            summary="The product pivot from meeting notes to AI expert roundtable is a strong differentiator.",
-            claims=[
-                EvidenceClaim(
-                    claim_id="c_ba_000",
-                    agent_id=self.agent_id,
-                    claim_type=ClaimType.INFERENCE,
-                    content="The 'game-like expert team assembly' metaphor lowers adoption barriers vs raw Agent frameworks.",
-                    evidence_ids=[],
-                    confidence=0.72,
-                ),
-                EvidenceClaim(
-                    claim_id="c_ba_001",
-                    agent_id=self.agent_id,
-                    claim_type=ClaimType.RECOMMENDATION,
-                    content="Target early adopters in product management and consulting first — they have the highest willingness-to-pay for structured analysis.",
-                    evidence_ids=[],
-                    confidence=0.70,
-                ),
-            ],
+            summary=f"Identified {len(claims)} business signal(s) from the discussion.",
+            claims=claims,
             open_questions=["What is the pricing model?", "Competitor response time?"],
             recommended_next_actions=["Run 5 user interviews.", "Validate willingness-to-pay."],
         )

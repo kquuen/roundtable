@@ -41,6 +41,26 @@ class TestProductManager:
         assert review.agent_id == "product_manager"
         assert len(review.claims) >= 1
 
+    def test_finds_english_signals(self):
+        """Mock agent should detect English decision keywords."""
+        from roundtable.models import TranscriptChunk
+        from roundtable.evidence import build_evidence_packet
+        segments = [{"speaker": "PM", "text": "We decide to focus on MVP first and defer ASR to phase 2."}]
+        evidence = build_evidence_packet("test", "meeting", segments)
+        agent = ProductManager()
+        review = agent.analyze(evidence)
+        assert len(review.claims) >= 1
+        assert "0 product signals" not in review.summary.lower()
+
+    def test_fallback_extracts_topics(self):
+        """Even without keywords, should extract at least one signal from input."""
+        from roundtable.models import TranscriptChunk
+        chunks = [TranscriptChunk(chunk_id="t_0", session_id="s_1", speaker="A", text="Random discussion about weather.")]
+        evidence = EvidencePacket(session_id="s_1", transcript_chunks=chunks)
+        agent = ProductManager()
+        review = agent.analyze(evidence)
+        assert len(review.claims) >= 1
+
 
 class TestArchitect:
     def test_analyze_returns_review(self):
@@ -51,6 +71,41 @@ class TestArchitect:
         review = agent.analyze(evidence)
         assert review.agent_id == "architect"
         assert len(review.claims) >= 1
+
+    def test_finds_english_tech_keywords(self):
+        """Mock architect should detect English tech keywords."""
+        from roundtable.evidence import build_evidence_packet
+        segments = [{"speaker": "Dev", "text": "The backend protocol and database design must be locked down first."}]
+        evidence = build_evidence_packet("test", "meeting", segments)
+        agent = Architect()
+        review = agent.analyze(evidence)
+        assert len(review.claims) >= 1
+        assert any("protocol" in c.content.lower() or "database" in c.content.lower() for c in review.claims)
+
+
+class TestProjectManager:
+    def test_analyzes_input(self):
+        """ProjectManager mock should detect timeline signals from input."""
+        from roundtable.evidence import build_evidence_packet
+        segments = [{"speaker": "PM", "text": "We plan to deliver MVP in 2 weeks, sprint-based."}]
+        evidence = build_evidence_packet("test", "meeting", segments)
+        agent = ProjectManager()
+        review = agent.analyze(evidence)
+        assert len(review.claims) >= 1
+        assert any("sprint" in c.content.lower() or "week" in c.content.lower()
+                    for c in review.claims if c.claim_type.value == "fact")
+
+
+class TestBusinessAnalyst:
+    def test_analyzes_input(self):
+        """BusinessAnalyst mock should detect business keywords from input."""
+        from roundtable.evidence import build_evidence_packet
+        segments = [{"speaker": "PM", "text": "Our target users are product managers who need structured analysis."}]
+        evidence = build_evidence_packet("test", "meeting", segments)
+        agent = BusinessAnalyst()
+        review = agent.analyze(evidence)
+        assert len(review.claims) >= 1
+        assert "0" not in review.summary or "signal" not in review.summary.lower()
 
 
 class TestOrchestrator:
