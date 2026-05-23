@@ -8,14 +8,20 @@ from typing import Optional
 
 from roundtable.models import AgentReview, EvidencePacket
 from roundtable.providers import ProviderAdapter
-from roundtable.agents import (
-    ProductManager, Architect, ProjectManager, BusinessAnalyst, SupervisorAgent,
-)
+from roundtable.registry import get_registry
 
 # Default timeout per agent (seconds)
 DEFAULT_AGENT_TIMEOUT = 30
 
 logger = logging.getLogger("roundtable.orchestrator")
+
+
+def _create_agents(agent_count: int = 5, provider: ProviderAdapter | None = None):
+    """Create agents from the registry, selecting up to agent_count."""
+    registry = get_registry()
+    all_ids = registry.list_all()
+    selected_ids = all_ids[:min(agent_count, len(all_ids))]
+    return [registry.create(sid, provider=provider) for sid in selected_ids]
 
 
 def run_orchestrator(
@@ -35,14 +41,7 @@ def run_orchestrator(
         )
 
     # Mock path: synchronous keyword-based agents
-    all_agents = [
-        ProductManager(),
-        Architect(),
-        ProjectManager(),
-        BusinessAnalyst(),
-        SupervisorAgent(),
-    ]
-    selected = all_agents[:min(agent_count, len(all_agents))]
+    selected = _create_agents(agent_count=agent_count)
     reviews: list[AgentReview] = []
     for agent in selected:
         review = agent.analyze(evidence)
@@ -70,14 +69,7 @@ async def run_orchestrator_async(
     Returns:
         List of AgentReview from each agent
     """
-    all_agents = [
-        ProductManager(provider=provider),
-        Architect(provider=provider),
-        ProjectManager(provider=provider),
-        BusinessAnalyst(provider=provider),
-        SupervisorAgent(provider=provider),
-    ]
-    selected = all_agents[:min(agent_count, len(all_agents))]
+    selected = _create_agents(agent_count=agent_count, provider=provider)
     logger.info("Dispatching %d agents concurrently (timeout=%ds)", len(selected), timeout)
 
     async def _run_one(agent) -> AgentReview:
