@@ -1,11 +1,12 @@
 """Phase 3: Supervisor + Report Composer tests."""
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 from roundtable.models import (
     TranscriptChunk, EvidencePacket, EvidenceClaim,
     AgentReview, SupervisorReview, ReviewResult, ClaimType,
 )
-from roundtable.supervisor import review_claims, summarize_review
+from roundtable.supervisor import review_claims, review_claims_async, summarize_review
 from roundtable.report import compose_report
 
 
@@ -87,3 +88,57 @@ class TestReportComposer:
         assert "Test Meeting" in report
         assert "MVP scope" in report
         assert "审查统计" in report
+
+
+class TestReviewClaimsAsync:
+    @pytest.mark.asyncio
+    async def test_contradiction_detection_runs_in_async_context(self):
+        """验证在 async 上下文中矛盾检测能正常工作。"""
+        chunks = [TranscriptChunk(chunk_id="t_0", session_id="s_1", speaker="A", text="test")]
+        evidence = EvidencePacket(session_id="s_1", transcript_chunks=chunks)
+
+        reviews = [
+            AgentReview(agent_id="pm", summary="test", claims=[
+                EvidenceClaim(claim_id="c_1", agent_id="pm", claim_type=ClaimType.FACT,
+                             content="团队决定先做文本导入", evidence_ids=["t_0"], confidence=0.9)
+            ]),
+            AgentReview(agent_id="arch", summary="test2", claims=[
+                EvidenceClaim(claim_id="c_2", agent_id="arch", claim_type=ClaimType.FACT,
+                             content="团队决定先做实时ASR", evidence_ids=["t_0"], confidence=0.9)
+            ]),
+        ]
+
+        mock_provider = MagicMock()
+        mock_provider.chat = AsyncMock(
+            return_value='{"contradictions": [{"claim_a": "c_1", "claim_b": "c_2", "reason": "矛盾"}]}'
+        )
+
+        result = await review_claims_async(reviews, evidence, provider=mock_provider)
+        mock_provider.chat.assert_called_once()
+        for r in result:
+            if r.claim_id in ("c_1", "c_2"):
+                assert r.review_result == ReviewResult.NEEDS_USER_CONFIRMATION
+
+    @pytest.mark.asyncio
+    async def test_no_contradiction_approved(self):
+        """无矛盾时 approved 保持。"""
+        chunks = [TranscriptChunk(chunk_id="t_0", session_id="s_1", speaker="A", text="test")]
+        evidence = EvidencePacket(session_id="s_1", transcript_chunks=chunks)
+
+        reviews = [
+            AgentReview(agent_id="pm", summary="test", claims=[
+                EvidenceClaim(claim_id="c_1", agent_id="pm", claim_type=ClaimType.FACT,
+                             content="test", evidence_ids=["t_0"], confidence=0.9)
+            ]),
+            AgentReview(agent_id="arch", summary="test2", claims=[
+                EvidenceClaim(claim_id="c_2", agent_id="arch", claim_type=ClaimType.FACT,
+                             content="another", evidence_ids=["t_0"], confidence=0.9)
+            ]),
+        ]
+
+        mock_provider = MagicMock()
+        mock_provider.chat = AsyncMock(return_value='{"contradictions": []}')
+
+        result = await review_claims_async(reviews, evidence, provider=mock_provider)
+        approved = sum(1 for r in result if r.review_result == ReviewResult.APPROVED)
+        assert approved == 2
