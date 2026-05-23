@@ -117,7 +117,10 @@ app = FastAPI(
 )
 
 # CORS — allow all origins in dev, restrict via env var in production
-_allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "*").split(",")
+_allowed_origins = os.getenv(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:5173",
+).split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,

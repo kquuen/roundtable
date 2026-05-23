@@ -18,6 +18,7 @@ from roundtable.providers import ProviderAdapter
 from roundtable.store import SessionStore, ReportStore
 from roundtable.memory import MemoryStore
 from roundtable.skills import load_skill
+from roundtable.utils import run_async_safely
 
 logger = logging.getLogger("roundtable.services")
 
@@ -134,8 +135,9 @@ class RoundtableService:
         lang: str = "zh",
     ) -> PipelineResult:
         """Synchronous wrapper for CLI usage."""
-        return asyncio.run(
-            self.run_pipeline(session_id, segments, mode, title, agent_count, lang)
+        return run_async_safely(
+            self.run_pipeline(session_id, segments, mode, title, agent_count, lang),
+            name="run_pipeline_sync — use run_pipeline() directly in async context",
         )
 
 

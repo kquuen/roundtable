@@ -16,6 +16,7 @@ from roundtable.providers import (
 )
 from roundtable.skills import load_skill
 from roundtable.linker import EvidenceLinker
+from roundtable.utils import run_async_safely
 
 
 class Agent:
@@ -36,7 +37,10 @@ class Agent:
     def analyze(self, evidence: EvidencePacket) -> AgentReview:
         """Synchronous entry point. Delegates to async or mock path."""
         if self.provider is not None:
-            return asyncio.run(self.analyze_async(evidence))
+            return run_async_safely(
+                self.analyze_async(evidence),
+                name=f"Agent.analyze({self.agent_id}) — use analyze_async() instead",
+            )
         return self._analyze_mock(evidence)
 
     async def analyze_async(self, evidence: EvidencePacket) -> AgentReview:
@@ -216,16 +220,16 @@ class ProductManager(Agent):
                 claim_id=f"c_pm_{len(claims):03d}",
                 agent_id=self.agent_id,
                 claim_type=ClaimType.RECOMMENDATION,
-                content="Based on the discussion, prioritize the MVP scope and defer non-critical features to later phases.",
+                content="根据讨论内容，建议优先聚焦 MVP 核心范围，将非关键特性推迟到后续阶段。",
                 evidence_ids=[claims[0].claim_id],
                 confidence=0.78,
             ))
         return AgentReview(
             agent_id=self.agent_id,
-            summary=f"Identified {len(claims)} product signal(s) from the meeting.",
+            summary=f"从会议中识别出 {len(claims)} 个产品信号。",
             claims=claims,
-            open_questions=["Are the MVP priorities aligned with user needs?"],
-            recommended_next_actions=["Validate MVP scope with stakeholders."],
+            open_questions=["MVP 优先级是否与用户需求对齐？"],
+            recommended_next_actions=["与利益相关方确认 MVP 范围。"],
         )
 
 
@@ -269,16 +273,16 @@ class Architect(Agent):
                 claim_id=f"c_arch_{len(claims):03d}",
                 agent_id=self.agent_id,
                 claim_type=ClaimType.RECOMMENDATION,
-                content="Define the core protocols first, then extend to full 131-skill registry.",
+                content="建议先锁定核心协议定义，再逐步扩展到完整的技能注册体系。",
                 evidence_ids=[],
                 confidence=0.80,
             ))
         return AgentReview(
             agent_id=self.agent_id,
-            summary=f"Found {len(claims)} technical signal(s) and provided architecture recommendations.",
+            summary=f"发现 {len(claims)} 个技术信号，已给出架构建议。",
             claims=claims,
-            open_questions=["What is the concurrency limit for agent dispatch?"],
-            recommended_next_actions=["Lock down TranscriptChunk and EvidenceClaim protocols."],
+            open_questions=["Agent 并发调度的上限是多少？"],
+            recommended_next_actions=["锁定 TranscriptChunk 和 EvidenceClaim 协议。"],
         )
 
 
@@ -357,16 +361,16 @@ class BusinessAnalyst(Agent):
                 claim_id=f"c_ba_{len(claims):03d}",
                 agent_id=self.agent_id,
                 claim_type=ClaimType.RECOMMENDATION,
-                content="Target early adopters with highest willingness-to-pay for structured analysis.",
+                content="建议瞄准付费意愿最高的早期用户群体，提供结构化分析服务。",
                 evidence_ids=[],
                 confidence=0.70,
             ))
         return AgentReview(
             agent_id=self.agent_id,
-            summary=f"Identified {len(claims)} business signal(s) from the discussion.",
+            summary=f"从讨论中识别出 {len(claims)} 个商业信号。",
             claims=claims,
-            open_questions=["What is the pricing model?", "Competitor response time?"],
-            recommended_next_actions=["Run 5 user interviews.", "Validate willingness-to-pay."],
+            open_questions=["定价模型是什么？", "竞品响应周期有多长？"],
+            recommended_next_actions=["进行 5 次用户访谈。", "验证付费意愿。"],
         )
 
 

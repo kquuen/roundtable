@@ -15,6 +15,7 @@ from roundtable.models import (
     AgentReview, ClaimType, EvidenceClaim, EvidencePacket,
     SupervisorReview, ReviewResult,
 )
+from roundtable.utils import run_async_safely
 
 logger = logging.getLogger("roundtable.supervisor")
 
@@ -57,8 +58,9 @@ def review_claims(
     # Step 3: Cross-agent contradiction detection (LLM-based if provider available)
     if provider is not None and len(reviews) >= 2:
         try:
-            reviews = asyncio.run(
-                _detect_contradictions_async(reviews, agent_reviews, provider)
+            reviews = run_async_safely(
+                _detect_contradictions_async(reviews, agent_reviews, provider),
+                name="review_claims — use review_claims_async() in async context",
             )
         except RuntimeError:
             logger.warning(

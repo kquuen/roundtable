@@ -48,6 +48,16 @@ _SECTION_TITLES: dict[str, dict[str, str]] = {
 }
 
 
+class _Titles:
+    """Safe title accessor — returns the key itself if missing from the lang dict."""
+
+    def __init__(self, data: dict[str, str]):
+        self._data = data
+
+    def __getitem__(self, key: str) -> str:
+        return self._data.get(key, key)
+
+
 def compose_report(
     agent_reviews: list[AgentReview],
     supervisor_reviews: list[SupervisorReview],
@@ -59,7 +69,7 @@ def compose_report(
     Args:
         lang: "zh" for Chinese, "en" for English
     """
-    t = _SECTION_TITLES.get(lang, _SECTION_TITLES["zh"])
+    t = _Titles(_SECTION_TITLES.get(lang, _SECTION_TITLES["zh"]))
     review_map = {r.claim_id: r for r in supervisor_reviews}
 
     # Categorize claims by review result

@@ -9,6 +9,7 @@ from typing import Optional
 from roundtable.models import AgentReview, EvidencePacket
 from roundtable.providers import ProviderAdapter
 from roundtable.registry import get_registry
+from roundtable.utils import run_async_safely
 
 # Default timeout per agent (seconds)
 DEFAULT_AGENT_TIMEOUT = 30
@@ -36,8 +37,9 @@ def run_orchestrator(
     Without provider, runs mock agents synchronously.
     """
     if provider is not None:
-        return asyncio.run(
-            run_orchestrator_async(evidence, agent_count, provider, timeout)
+        return run_async_safely(
+            run_orchestrator_async(evidence, agent_count, provider, timeout),
+            name="run_orchestrator — use run_orchestrator_async() instead",
         )
 
     # Mock path: synchronous keyword-based agents

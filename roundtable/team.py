@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 from roundtable.models import EvidencePacket, TeamTemplate
 from roundtable.providers import ProviderAdapter
+from roundtable.utils import run_async_safely
 
 
 # ── Built-in team templates ──
@@ -87,7 +91,12 @@ def classify_session(
     """
     if provider is not None:
         try:
-            return asyncio.run(_classify_with_llm(evidence, provider))
+            return run_async_safely(
+                _classify_with_llm(evidence, provider),
+                name="classify_session — use classify_session_async() in async context",
+            )
+        except RuntimeError:
+            logger.warning("分类跳过：在事件循环中调用了同步 classify_session")
         except Exception:
             pass  # Fall through to keyword fallback
 
