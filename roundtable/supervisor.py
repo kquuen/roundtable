@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from typing import Optional
 
@@ -14,6 +15,8 @@ from roundtable.models import (
     AgentReview, ClaimType, EvidenceClaim, EvidencePacket,
     SupervisorReview, ReviewResult,
 )
+
+logger = logging.getLogger("roundtable.supervisor")
 
 
 def review_claims(
@@ -57,8 +60,43 @@ def review_claims(
             reviews = asyncio.run(
                 _detect_contradictions_async(reviews, agent_reviews, provider)
             )
+        except RuntimeError:
+            logger.warning(
+                "矛盾检测跳过：在事件循环中调用了同步 review_claims，请使用 review_claims_async"
+            )
         except Exception:
             pass  # Contradiction detection is best-effort
+
+    return reviews
+
+
+async def review_claims_async(
+    agent_reviews: list[AgentReview],
+    evidence: EvidencePacket,
+    mode: str = "meeting",
+    provider=None,
+    agent_forbidden: dict[str, list[str]] | None = None,
+) -> list[SupervisorReview]:
+    """异步版本：直接 await 矛盾检测，不再嵌套 asyncio.run()。"""
+    valid_chunk_ids = {c.chunk_id for c in evidence.transcript_chunks}
+    reviews: list[SupervisorReview] = []
+
+    for ar in agent_reviews:
+        for claim in ar.claims:
+            r = _review_single_claim(claim, valid_chunk_ids, mode)
+            if r.review_result == ReviewResult.APPROVED and agent_forbidden:
+                forbidden = agent_forbidden.get(ar.agent_id, [])
+                fb_result = _check_forbidden(claim, forbidden)
+                if fb_result:
+                    r = fb_result
+            reviews.append(r)
+
+    # 直接 await，不再 asyncio.run()
+    if provider is not None and len(reviews) >= 2:
+        try:
+            reviews = await _detect_contradictions_async(reviews, agent_reviews, provider)
+        except Exception:
+            pass
 
     return reviews
 
@@ -239,6 +277,8 @@ async def _detect_contradictions_async(
     if len(approved) < 2:
         return reviews
 
+    logger.info("Running contradiction detection on %d approved claims", len(approved))
+
     # Build prompt for contradiction detection
     claims_text = "\n".join(
         f"[{c['claim_id']}] ({c['agent_id']}, {c['claim_type']}) {c['content']}"
@@ -276,6 +316,8 @@ async def _detect_contradictions_async(
         result = json.loads(cleaned)
 
         contradictions = result.get("contradictions", [])
+        if contradictions:
+            logger.info("Found %d contradictions", len(contradictions))
         for con in contradictions:
             claim_a = con.get("claim_a", "")
             claim_b = con.get("claim_b", "")
@@ -293,8 +335,8 @@ async def _detect_contradictions_async(
                             reason=f"跨 Agent 矛盾检测：{reason}（与 {claim_b if cid == claim_a else claim_a} 冲突）",
                         )
 
-    except Exception:
-        pass  # Best-effort, don't break the pipeline
+    except Exception as e:
+        logger.warning("Contradiction detection failed: %s", e)
 
     return reviews
 

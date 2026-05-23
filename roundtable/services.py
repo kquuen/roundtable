@@ -6,17 +6,20 @@ Extracted from app.py and main.py so CLI and API share the same entry point.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 
 from roundtable.models import PipelineResult
 from roundtable.evidence import build_evidence_packet
 from roundtable.orchestrator import run_orchestrator, run_orchestrator_async
-from roundtable.supervisor import review_claims
+from roundtable.supervisor import review_claims, review_claims_async
 from roundtable.report import compose_report
 from roundtable.providers import ProviderAdapter
 from roundtable.store import SessionStore, ReportStore
 from roundtable.memory import MemoryStore
 from roundtable.skills import load_skill
+
+logger = logging.getLogger("roundtable.services")
 
 
 class RoundtableService:
@@ -65,7 +68,9 @@ class RoundtableService:
             PipelineResult with report, reviews, and metadata
         """
         # 1. Evidence
+        logger.info("[%s] Pipeline start: mode=%s, agents=%d", session_id, mode, agent_count)
         evidence = build_evidence_packet(session_id, mode, segments)
+        logger.info("[%s] Evidence built: %d chunks", session_id, len(evidence.transcript_chunks))
 
         # 2. Agent analysis (async with provider, sync without)
         if self.provider is not None:
@@ -76,15 +81,17 @@ class RoundtableService:
             )
         else:
             agent_reviews = run_orchestrator(evidence, agent_count=agent_count)
+        logger.info("[%s] Agent analysis complete: %d reviews", session_id, len(agent_reviews))
 
         # 3. Supervisor review (with forbidden rules from skill registry)
         agent_ids = list({ar.agent_id for ar in agent_reviews})
         agent_forbidden = _build_forbidden_map(agent_ids)
-        supervisor_reviews = review_claims(
+        supervisor_reviews = await review_claims_async(
             agent_reviews, evidence,
             mode=mode, provider=self.provider,
             agent_forbidden=agent_forbidden,
         )
+        logger.info("[%s] Supervisor review complete: %d claims reviewed", session_id, len(supervisor_reviews))
 
         # 4. Memory — auto-write high-confidence approved claims
         memories_written = 0
@@ -103,6 +110,8 @@ class RoundtableService:
             path = self.report_store.save(session_id, title or "Untitled", report)
             report_path = str(path)
 
+        logger.info("[%s] Pipeline complete: memories=%d", session_id, memories_written)
+
         return PipelineResult(
             session_id=session_id,
             mode="llm" if self.provider else "mock",
@@ -112,6 +121,20 @@ class RoundtableService:
             report_path=report_path,
             memories_written=memories_written,
         )
+
+    def run_pipeline_sync(
+        self,
+        session_id: str,
+        segments: list[dict],
+        mode: str = "meeting",
+        title: str = "",
+        agent_count: int = 5,
+    ) -> PipelineResult:
+        """Synchronous wrapper for CLI usage."""
+        return asyncio.run(
+            self.run_pipeline(session_id, segments, mode, title, agent_count)
+        )
+
 
 def _build_forbidden_map(agent_ids: list[str]) -> dict[str, list[str]]:
     """Build a mapping of agent_id → forbidden rules from the skill registry.
@@ -128,17 +151,3 @@ def _build_forbidden_map(agent_ids: list[str]) -> dict[str, list[str]]:
         except KeyError:
             result[aid] = []
     return result
-
-
-    def run_pipeline_sync(
-        self,
-        session_id: str,
-        segments: list[dict],
-        mode: str = "meeting",
-        title: str = "",
-        agent_count: int = 5,
-    ) -> PipelineResult:
-        """Synchronous wrapper for CLI usage."""
-        return asyncio.run(
-            self.run_pipeline(session_id, segments, mode, title, agent_count)
-        )

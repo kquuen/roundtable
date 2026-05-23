@@ -25,6 +25,12 @@ from roundtable.store import SessionStore, ReportStore
 from roundtable.memory import MemoryStore
 from roundtable.services import RoundtableService
 from roundtable.skills import load_from_directory, reload_skills, list_skills
+from roundtable.logging_config import setup_logging
+
+setup_logging()
+
+import logging
+logger = logging.getLogger("roundtable.app")
 
 # ── Persistence stores (survive restarts) ──
 
@@ -71,15 +77,15 @@ async def lifespan(app: FastAPI):
     global _provider, _service
     _provider = _init_provider()
     if _provider:
-        print(f"[roundtable] LLM provider initialized: deepseek")
+        logger.info("LLM provider initialized: deepseek")
     else:
-        print("[roundtable] WARNING: DEEPSEEK_API_KEY not set — running in mock mode")
-    print(f"[roundtable] Loaded {_store.session_count()} persisted sessions")
+        logger.warning("DEEPSEEK_API_KEY not set — running in mock mode")
+    logger.info("Loaded %d persisted sessions", _store.session_count())
 
     # Load YAML skills from skills/ directory
     yaml_loaded = load_from_directory()
     if yaml_loaded:
-        print(f"[roundtable] Loaded {yaml_loaded} YAML skills from skills/")
+        logger.info("Loaded %d YAML skills from skills/", yaml_loaded)
 
     _get_service(_provider)
 

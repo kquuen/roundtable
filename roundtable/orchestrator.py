@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 
 from roundtable.models import AgentReview, EvidencePacket
@@ -13,6 +14,8 @@ from roundtable.agents import (
 
 # Default timeout per agent (seconds)
 DEFAULT_AGENT_TIMEOUT = 30
+
+logger = logging.getLogger("roundtable.orchestrator")
 
 
 def run_orchestrator(
@@ -75,6 +78,7 @@ async def run_orchestrator_async(
         SupervisorAgent(provider=provider),
     ]
     selected = all_agents[:min(agent_count, len(all_agents))]
+    logger.info("Dispatching %d agents concurrently (timeout=%ds)", len(selected), timeout)
 
     async def _run_one(agent) -> AgentReview:
         try:
@@ -83,6 +87,7 @@ async def run_orchestrator_async(
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
+            logger.warning("Agent %s timed out after %ds", agent.agent_id, timeout)
             return AgentReview(
                 agent_id=agent.agent_id,
                 summary=f"[超时] {agent.skill.name} 在 {timeout}s 内未完成分析",
@@ -91,6 +96,7 @@ async def run_orchestrator_async(
                 recommended_next_actions=[],
             )
         except Exception as e:
+            logger.error("Agent %s failed: %s", agent.agent_id, e)
             return AgentReview(
                 agent_id=agent.agent_id,
                 summary=f"[错误] {agent.skill.name} 分析失败：{e}",

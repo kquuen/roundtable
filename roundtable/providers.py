@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 from typing import Optional
@@ -14,6 +15,8 @@ from typing import Optional
 from openai import AsyncOpenAI
 
 from roundtable.models import EvidencePacket, SkillManifest
+
+logger = logging.getLogger("roundtable.providers")
 
 
 class ProviderAdapter:
@@ -76,6 +79,7 @@ class ProviderAdapter:
 
             except Exception as e:
                 last_error = str(e)
+                logger.warning("API call attempt %d/3 failed: %s", attempt + 1, e)
                 if attempt < 2:
                     await asyncio.sleep(2 ** attempt)  # 1s, 2s backoff
                 continue
