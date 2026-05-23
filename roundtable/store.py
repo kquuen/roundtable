@@ -7,11 +7,23 @@ Sessions survive server restarts.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from roundtable.models import Session, SessionStatus, SessionMode
+
+
+def _validate_session_id(session_id: str) -> str:
+    """Validate session_id to prevent path traversal attacks."""
+    if not session_id:
+        raise ValueError("session_id cannot be empty")
+    if not re.match(r'^[a-zA-Z0-9_-]+$', session_id):
+        raise ValueError(
+            f"Invalid session_id '{session_id}': only alphanumeric, underscore, hyphen allowed"
+        )
+    return session_id
 
 
 class SessionStore:
@@ -102,6 +114,7 @@ class SessionStore:
         self._index_path.write_text(json.dumps(idx, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _session_path(self, session_id: str) -> Path:
+        _validate_session_id(session_id)
         return self.base_dir / f"{session_id}.json"
 
     # ── Session CRUD ──
