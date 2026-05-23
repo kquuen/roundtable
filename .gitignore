@@ -16,3 +16,7 @@ Thumbs.db
 
 # Reports
 reports/
+
+# Runtime data
+data/sessions/
+data/memory/
