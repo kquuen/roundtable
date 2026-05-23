@@ -14,8 +14,24 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+import json as _json
+
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+
+class Utf8JSONResponse(JSONResponse):
+    """JSON response that renders Chinese characters as-is (not \\uXXXX escapes)."""
+
+    def render(self, content) -> bytes:
+        return _json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+        ).encode("utf-8")
 
 from roundtable.models import SessionStatus, SessionMode
 from roundtable.evidence import build_evidence_packet
@@ -96,6 +112,7 @@ app = FastAPI(
     version="0.3.0",
     description="AI 专家圆桌工作台后端 API — LLM 驱动 + 持久化",
     lifespan=lifespan,
+    default_response_class=Utf8JSONResponse,
 )
 
 

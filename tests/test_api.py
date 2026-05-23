@@ -78,3 +78,16 @@ class TestTeam:
         data = r.json()
         assert "session_type" in data
         assert len(data["recommended_teams"]) >= 1
+
+    def test_recommend_chinese_encoding(self):
+        """Chinese characters should render as-is, not \\uXXXX escapes."""
+        r = client.post("/team/recommend", json={
+            "session_id": "s_enc",
+            "segments": [{"speaker": "PM", "text": "产品需求和用户价值讨论"}],
+        })
+        assert r.status_code == 200
+        body = r.text
+        # Chinese characters should appear directly, not as unicode escapes
+        assert "\\u" not in body
+        # Verify at least one known Chinese team name is present
+        assert any(name in body for name in ["产品深挖队", "广域机会发现队", "技术审查队"])
