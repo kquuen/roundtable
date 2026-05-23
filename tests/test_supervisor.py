@@ -89,6 +89,34 @@ class TestReportComposer:
         assert "MVP scope" in report
         assert "审查统计" in report
 
+    def test_generates_english_report(self):
+        claim = EvidenceClaim(
+            claim_id="c_0", agent_id="pm", claim_type=ClaimType.FACT,
+            content="MVP scope decided.", evidence_ids=["t_0"], confidence=0.9,
+        )
+        agent_review = AgentReview(
+            agent_id="pm",
+            summary="Good meeting.",
+            claims=[claim],
+            open_questions=["What next?"],
+            recommended_next_actions=["Implement Phase 0."],
+        )
+        supervisor_review = SupervisorReview(
+            claim_id="c_0", review_result=ReviewResult.APPROVED, final_type="fact",
+        )
+        report = compose_report(
+            [agent_review], [supervisor_review],
+            session_title="Test Meeting", lang="en",
+        )
+        assert "# Roundtable Review Report" in report
+        assert "## Summary" in report
+        assert "## Meeting Facts" in report
+        assert "## Open Questions" in report
+        assert "Review Statistics" in report
+        # Should NOT contain Chinese section titles
+        assert "圆桌会议审查报告" not in report
+        assert "摘要" not in report
+
 
 class TestReviewClaimsAsync:
     @pytest.mark.asyncio

@@ -67,6 +67,39 @@ class TestRoundtable:
         assert "report" in r2.json()
         assert "# 圆桌会议审查报告" in r2.json()["report"]
 
+    def test_run_lang_en(self):
+        """English lang should produce English section titles."""
+        r = client.post("/session/create", json={"title": "Test EN", "mode": "meeting"})
+        sid = r.json()["session_id"]
+        client.post("/evidence/upload", json={
+            "session_id": sid,
+            "segments": [{"speaker": "PM", "text": "We need to ship the MVP."}],
+        })
+        r2 = client.post("/roundtable/run", json={
+            "session_id": sid, "agent_count": 2, "use_mock": True, "lang": "en",
+        })
+        assert r2.status_code == 200
+        report = r2.json()["report"]
+        assert "# Roundtable Review Report" in report
+        assert "## Summary" in report
+        assert "摘要" not in report
+
+    def test_run_lang_zh_default(self):
+        """Default lang should still produce Chinese section titles."""
+        r = client.post("/session/create", json={"title": "Test ZH", "mode": "meeting"})
+        sid = r.json()["session_id"]
+        client.post("/evidence/upload", json={
+            "session_id": sid,
+            "segments": [{"speaker": "PM", "text": "讨论产品规划"}],
+        })
+        r2 = client.post("/roundtable/run", json={
+            "session_id": sid, "agent_count": 2, "use_mock": True,
+        })
+        assert r2.status_code == 200
+        report = r2.json()["report"]
+        assert "# 圆桌会议审查报告" in report
+        assert "## 摘要" in report
+
 
 class TestTeam:
     def test_recommend(self):

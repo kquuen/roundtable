@@ -143,6 +143,7 @@ class RunRoundtableRequest(BaseModel):
     session_id: str
     agent_count: int = 5
     use_mock: bool = False
+    lang: str = "zh"  # "zh" or "en"
 
 
 # ── Routes ──
@@ -235,6 +236,7 @@ async def run_roundtable(req: RunRoundtableRequest):
         mode=session.mode,
         title=session.title,
         agent_count=req.agent_count,
+        lang=req.lang,
     )
 
     _store.update_status(req.session_id, SessionStatus.COMPLETED)

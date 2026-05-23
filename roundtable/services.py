@@ -54,6 +54,7 @@ class RoundtableService:
         mode: str = "meeting",
         title: str = "",
         agent_count: int = 5,
+        lang: str = "zh",
     ) -> PipelineResult:
         """Run the complete roundtable pipeline.
 
@@ -63,6 +64,7 @@ class RoundtableService:
             mode: "meeting" or "personal_roundtable"
             title: Session title (used in report header)
             agent_count: 1-5 agents to dispatch
+            lang: "zh" for Chinese, "en" for English report
 
         Returns:
             PipelineResult with report, reviews, and metadata
@@ -102,7 +104,7 @@ class RoundtableService:
             memories_written = len(written)
 
         # 5. Report
-        report = compose_report(agent_reviews, supervisor_reviews, session_title=title)
+        report = compose_report(agent_reviews, supervisor_reviews, session_title=title, lang=lang)
 
         # 6. Archive report
         report_path = ""
@@ -129,10 +131,11 @@ class RoundtableService:
         mode: str = "meeting",
         title: str = "",
         agent_count: int = 5,
+        lang: str = "zh",
     ) -> PipelineResult:
         """Synchronous wrapper for CLI usage."""
         return asyncio.run(
-            self.run_pipeline(session_id, segments, mode, title, agent_count)
+            self.run_pipeline(session_id, segments, mode, title, agent_count, lang)
         )
 
 
