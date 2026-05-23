@@ -17,6 +17,7 @@ from typing import Optional
 import json as _json
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -113,6 +114,16 @@ app = FastAPI(
     description="AI 专家圆桌工作台后端 API — LLM 驱动 + 持久化",
     lifespan=lifespan,
     default_response_class=Utf8JSONResponse,
+)
+
+# CORS — allow all origins in dev, restrict via env var in production
+_allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "*").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

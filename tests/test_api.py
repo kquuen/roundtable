@@ -91,3 +91,24 @@ class TestTeam:
         assert "\\u" not in body
         # Verify at least one known Chinese team name is present
         assert any(name in body for name in ["产品深挖队", "广域机会发现队", "技术审查队"])
+
+
+class TestCORS:
+    def test_cors_preflight(self):
+        """OPTIONS preflight should return CORS headers."""
+        r = client.options("/", headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+        })
+        assert r.status_code == 200
+        headers_lower = {k.lower() for k in r.headers.keys()}
+        assert "access-control-allow-origin" in headers_lower
+
+    def test_cors_post_with_origin(self):
+        """POST with Origin header should include CORS headers."""
+        r = client.post("/session/create",
+            json={"title": "test", "mode": "meeting"},
+            headers={"Origin": "http://localhost:3000"},
+        )
+        assert r.status_code == 201
+        assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
