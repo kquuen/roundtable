@@ -97,14 +97,16 @@ def main():
         print("[roundtable] Mock mode: keyword-based analysis")
 
     # ── Run pipeline ──
-    report = run_pipeline(
+    svc = RoundtableService(provider=provider)
+    result = svc.run_pipeline_sync(
+        session_id="s_cli",
         segments=segments,
-        session_id="s_001",
         mode=args.mode,
-        title=title,
-        agent_count=min(args.agents, 5),
-        provider=provider,
+        title=args.title,
+        agent_count=args.agents,
+        lang=args.lang,
     )
+    report = result.report
 
     # ── Output ──
     output_path = Path(args.output) if args.output else (

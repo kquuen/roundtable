@@ -73,7 +73,7 @@ def review_claims(
                 "矛盾检测跳过：在事件循环中调用了同步 review_claims，请使用 review_claims_async"
             )
         except Exception:
-            logger.warning("矛盾检测异常，已跳过：", exc_info=True)
+            logger.warning("矛盾检测异常，已跳过", exc_info=True)
 
     _compute_consensus_levels(reviews, agent_reviews)
     return reviews
