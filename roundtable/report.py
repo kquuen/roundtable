@@ -252,3 +252,120 @@ def compose_report(
     )
 
     return "\n".join(lines)
+
+
+# ── Phase 6: Debate Report ──
+
+def compose_debate_report(
+    debate_session,
+    session_title: str = "",
+    lang: str = "zh",
+) -> str:
+    """生成辩论报告：辩论记录区 + 共识分层区 + 冲突对比。
+
+    与 compose_report() 独立——辩论报告有独特的两轮结构。
+    """
+    is_en = lang == "en"
+    lines: list[str] = []
+
+    # ── Header ──
+    title = session_title or ("Debate Report" if is_en else "辩论报告")
+    lines.append(f"# {title}")
+    lines.append("")
+    lines.append(f"**{'Session' if is_en else '会话'}**：{debate_session.session_id}")
+    lines.append(f"**{'Rounds' if is_en else '辩论轮次'}**：{len(debate_session.rounds)}")
+    total_args = sum(len(r.arguments) for r in debate_session.rounds)
+    lines.append(f"**{'Arguments' if is_en else '论点数'}**：{total_args}")
+    lines.append("")
+
+    # ── Consensus Layering ──
+    lines.append("---")
+    lines.append(f"## {'Consensus' if is_en else '共识分层'}")
+    lines.append("")
+
+    # Build claim_id → content map from Round 1 arguments
+    claim_content: dict[str, str] = {}
+    for rnd in debate_session.rounds:
+        if rnd.round_number == 1:
+            for arg in rnd.arguments:
+                if arg.claim_id:
+                    claim_content[arg.claim_id] = arg.content
+
+    # Group by level
+    by_level: dict[str, list] = {}
+    for cid, level in debate_session.consensus_summary.items():
+        by_level.setdefault(level, []).append(cid)
+
+    level_labels = {
+        "strong": ("✅ " + ("Strong Consensus" if is_en else "强共识"), "≥3/5 Agents"),
+        "majority": ("🟡 " + ("Majority" if is_en else "多数同意"), "2/5 Agents"),
+        "isolated": ("🔵 " + ("Isolated" if is_en else "孤立观点"), "1/5 Agents"),
+        "contradicted": ("🔴 " + ("Contradicted" if is_en else "明确矛盾"), "conflict"),
+    }
+
+    for level in ("strong", "majority", "isolated", "contradicted"):
+        items = by_level.get(level, [])
+        if not items:
+            continue
+        label, count_note = level_labels.get(level, (level, ""))
+        lines.append(f"### {label} ({len(items)} {count_note})")
+        for cid in items:
+            content = claim_content.get(cid, "")
+            lines.append(f"- `{cid}` {content[:100]}")
+        lines.append("")
+
+    # ── Round-by-round debate record ──
+    lines.append("---")
+    lines.append(f"## {'Debate Record' if is_en else '辩论记录'}")
+    lines.append("")
+
+    for rnd in debate_session.rounds:
+        header = {
+            1: ("Round 1: First Round Opinions" if is_en else "Round 1：首轮观点"),
+            2: ("Round 2: Challenges & Amendments" if is_en else "Round 2：质疑与修正"),
+        }.get(rnd.round_number, f"Round {rnd.round_number}")
+        lines.append(f"### {header}")
+        lines.append("")
+
+        lines.append("| " + ("Position" if is_en else "立场") + " | " + ("Agent" if is_en else "专家") + " | " + ("Content" if is_en else "内容") + " | " + ("Target" if is_en else "目标") + " |")
+        lines.append("|------|------|------|------|")
+
+        for arg in rnd.arguments:
+            pos_map = {"agree": "✅ " + ("Agree" if is_en else "同意"),
+                       "disagree": "❌ " + ("Disagree" if is_en else "反对"),
+                       "extend": "➕ " + ("Extend" if is_en else "延伸")}
+            pos = pos_map.get(arg.position, arg.position)
+            target = f"→ `{arg.target_claim_id}`" if arg.target_claim_id else "—"
+            lines.append(f"| {pos} | `{arg.agent_id}` | {arg.content[:80]} | {target} |")
+        lines.append("")
+
+    # ── Conflict pairs (both sides) ──
+    if debate_session.conflicts:
+        lines.append("---")
+        lines.append(f"## {'⚠️ Conflicts' if is_en else '⚠️ 矛盾双方论据'}")
+        lines.append("")
+
+        for i, c in enumerate(debate_session.conflicts, 1):
+            lines.append(f"### {'Conflict' if is_en else '矛盾'} #{i}")
+            if c.get("reason"):
+                lines.append(f"**{'Reason' if is_en else '原因'}**：{c['reason']}")
+                lines.append("")
+            lines.append(f"> **{'Side A' if is_en else '甲方'}** (`{c.get('claim_a', '?')}`，{c.get('agent_a', '?')})")
+            lines.append(f"> {c.get('content_a', '')}")
+            lines.append("")
+            lines.append(f"> **{'Side B' if is_en else '乙方'}** (`{c.get('claim_b', '?')}`，{c.get('agent_b', '?')})")
+            lines.append(f"> {c.get('content_b', '')}")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def _find_argument_content(debate_session, claim_id: str) -> str:
+    """Find the content text for a claim_id across all rounds."""
+    for rnd in debate_session.rounds:
+        for arg in rnd.arguments:
+            if arg.argument_id and claim_id in arg.argument_id:
+                return arg.content
+            if arg.target_claim_id == claim_id:
+                return arg.content
+    return ""

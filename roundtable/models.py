@@ -106,6 +106,7 @@ class DebateArgument(BaseModel):
     """一轮辩论中的单个论点。"""
     argument_id: str = Field(description="e.g. arg_r2_001")
     agent_id: str
+    claim_id: str = Field(default="", description="源 claim_id（Round 1 时存在）")
     round: int = Field(ge=1, le=2, description="1=首轮观点, 2=质疑/同意/修正")
     position: str = Field(description="agree | disagree | extend")
     target_claim_id: Optional[str] = Field(

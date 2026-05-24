@@ -116,26 +116,9 @@ class RoundtableService:
         engine = DebateEngine(provider=self.provider, budget=budget)
         debate_session = await engine.run_debate(evidence, agents)
 
-        # 4. Build report (basic: consensus summary + debate rounds)
-        report_lines = [f"# 辩论报告：{title or 'Untitled'}", ""]
-        report_lines.append("## 共识分层")
-        for claim_id, level in debate_session.consensus_summary.items():
-            report_lines.append(f"- [{level}] {claim_id}")
-        report_lines.append("")
-        report_lines.append(f"## 辩论记录")
-        for rnd in debate_session.rounds:
-            report_lines.append(f"### Round {rnd.round_number}: {'首轮观点' if rnd.round_number == 1 else '质疑与修正'}")
-            for arg in rnd.arguments:
-                pos = "✅" if arg.position == "agree" else "❌" if arg.position == "disagree" else "➕"
-                report_lines.append(f"- {pos} [{arg.agent_id}] {arg.content[:120]}")
-            report_lines.append("")
-        if debate_session.conflicts:
-            report_lines.append("## ⚠️ 引用完整性警告")
-            for c in debate_session.conflicts:
-                report_lines.append(f"- {c['argument_id']}: {c['error']}")
-            report_lines.append("")
-
-        report = "\n".join(report_lines)
+        # 4. Build report
+        from roundtable.report import compose_debate_report
+        report = compose_debate_report(debate_session, session_title=title, lang=lang)
 
         logger.info("[%s] Debate pipeline complete: %d rounds, %s",
                      session_id, len(debate_session.rounds), budget.summary())

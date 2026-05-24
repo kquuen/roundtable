@@ -249,6 +249,7 @@ class DebateEngine:
                 args.append(DebateArgument(
                     argument_id=f"arg_r{round_num}_{ar.agent_id}_{i:03d}",
                     agent_id=ar.agent_id,
+                    claim_id=claim.claim_id,
                     round=round_num,
                     position="extend",
                     target_claim_id=None,

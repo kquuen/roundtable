@@ -64,7 +64,7 @@ def review_claims(
     # Step 3: Cross-agent contradiction detection (LLM-based if provider available)
     if provider is not None and len(reviews) >= 2:
         try:
-            reviews = run_async_safely(
+            reviews, _conflict_pairs = run_async_safely(
                 _detect_contradictions_async(reviews, agent_reviews, provider),
                 name="review_claims — use review_claims_async() in async context",
             )
@@ -108,7 +108,7 @@ async def review_claims_async(
     # 直接 await，不再 asyncio.run()
     if provider is not None and len(reviews) >= 2:
         try:
-            reviews = await _detect_contradictions_async(reviews, agent_reviews, provider)
+            reviews, _conflict_pairs = await _detect_contradictions_async(reviews, agent_reviews, provider)
         except Exception:
             pass
 
@@ -381,10 +381,13 @@ async def _detect_contradictions_async(
     reviews: list[SupervisorReview],
     agent_reviews: list[AgentReview],
     provider,
-) -> list[SupervisorReview]:
+) -> tuple[list[SupervisorReview], list[dict]]:
     """Use LLM to detect contradictions between agents' claims.
 
     Modifies reviews in-place: conflicting claims → NEEDS_USER_CONFIRMATION.
+
+    Returns:
+        (modified_reviews, conflict_pairs) — conflict_pairs for report display.
     """
     # Collect approved claims with their agent info
     approved = []
@@ -400,7 +403,7 @@ async def _detect_contradictions_async(
             review_index[r.claim_id] = i
 
     if len(approved) < 2:
-        return reviews
+        return reviews, []
 
     logger.info("Running contradiction detection on %d approved claims", len(approved))
 
@@ -443,10 +446,27 @@ async def _detect_contradictions_async(
         contradictions = result.get("contradictions", [])
         if contradictions:
             logger.info("Found %d contradictions", len(contradictions))
+
+        # Build conflict pairs for report display (both sides' full arguments)
+        conflict_pairs: list[dict] = []
+
         for con in contradictions:
             claim_a = con.get("claim_a", "")
             claim_b = con.get("claim_b", "")
             reason = con.get("reason", "声明互相矛盾")
+
+            # Get both claims' full content
+            content_a = _get_claim_content(claim_a, agent_reviews)
+            content_b = _get_claim_content(claim_b, agent_reviews)
+            agent_a = _get_claim_agent(claim_a, agent_reviews) or "unknown"
+            agent_b = _get_claim_agent(claim_b, agent_reviews) or "unknown"
+
+            conflict_pairs.append({
+                "claim_a": claim_a, "claim_b": claim_b,
+                "agent_a": agent_a, "agent_b": agent_b,
+                "content_a": content_a[:200], "content_b": content_b[:200],
+                "reason": reason,
+            })
 
             for cid in (claim_a, claim_b):
                 if cid in review_index:
@@ -454,16 +474,27 @@ async def _detect_contradictions_async(
                     r = reviews[idx]
                     # Only mark if currently approved
                     if r.review_result == ReviewResult.APPROVED:
+                        other_cid = claim_b if cid == claim_a else claim_a
+                        other_content = content_b if cid == claim_a else content_a
+                        other_agent = agent_b if cid == claim_a else agent_a
+
                         # Update claim lifecycle
                         for ar in agent_reviews:
                             for claim in ar.claims:
                                 if claim.claim_id == r.claim_id:
                                     claim.lifecycle = ClaimLifecycle.CHALLENGED
                                     break
+
+                        # Enriched reason: show both sides
+                        enriched_reason = (
+                            f"⚔️ 矛盾检测：{reason}\n"
+                            f"▶ 本方观点（{r.claim_id}）：{_get_claim_content(r.claim_id, agent_reviews)[:120]}\n"
+                            f"▶ 对立方观点（{other_cid}，{other_agent}）：{other_content[:120]}"
+                        )
                         reviews[idx] = SupervisorReview(
                             claim_id=r.claim_id,
                             review_result=ReviewResult.NEEDS_USER_CONFIRMATION,
-                            reason=f"跨 Agent 矛盾检测：{reason}（与 {claim_b if cid == claim_a else claim_a} 冲突）",
+                            reason=enriched_reason,
                         )
                         # Set NEEDS_USER after NEEDS_USER_CONFIRMATION
                         for ar in agent_reviews:
@@ -472,10 +503,12 @@ async def _detect_contradictions_async(
                                     claim.lifecycle = ClaimLifecycle.NEEDS_USER
                                     break
 
+        return reviews, conflict_pairs
+
     except Exception as e:
         logger.warning("Contradiction detection failed: %s", e)
 
-    return reviews
+    return reviews, []
 
 
 def _flatten_claims(agent_reviews: list[AgentReview]) -> list:
@@ -493,6 +526,15 @@ def _get_claim_content(claim_id: str, agent_reviews: list[AgentReview]) -> str:
         for c in ar.claims:
             if c.claim_id == claim_id:
                 return c.content
+    return ""
+
+
+def _get_claim_agent(claim_id: str, agent_reviews: list[AgentReview]) -> str:
+    """Find the agent_id that produced a given claim."""
+    for ar in agent_reviews:
+        for c in ar.claims:
+            if c.claim_id == claim_id:
+                return ar.agent_id
     return ""
 
 
