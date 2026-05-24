@@ -81,6 +81,14 @@ class ConsensusLevel(str, Enum):
     UNKNOWN = "unknown"          # 尚未评估
 
 
+class VerificationStatus(str, Enum):
+    """搜索校验结果——中性命名，明确是'搜索佐证'而非'事实确认'。"""
+    UNCHECKED = "unchecked"
+    SUPPORTED_BY_SEARCH = "supported_by_search"
+    CONTRADICTED_BY_SEARCH = "contradicted_by_search"
+    NO_EVIDENCE_FOUND = "no_evidence_found"
+
+
 class EvidenceClaim(BaseModel):
     claim_id: str = Field(description="Unique claim id, e.g. c_001")
     agent_id: str = Field(description="Which agent made this claim")
@@ -94,6 +102,10 @@ class EvidenceClaim(BaseModel):
     status: str = Field(default="pending_review")
     lifecycle: ClaimLifecycle = Field(default=ClaimLifecycle.DRAFT)
     consensus_level: ConsensusLevel = Field(default=ConsensusLevel.UNKNOWN)
+    verification: VerificationStatus = Field(
+        default=VerificationStatus.UNCHECKED,
+        description="搜索校验状态",
+    )
     debate_history: List[str] = Field(
         default_factory=list,
         description="辩论中引用此 claim 的 argument_id 列表",
@@ -197,6 +209,9 @@ class ReviewResult(str, Enum):
     DOWNGRADED = "downgraded"
     REJECTED = "rejected"
     NEEDS_USER_CONFIRMATION = "needs_user_confirmation"
+
+
+# ── Boundary Classification ──
 
 
 class BoundaryClass(str, Enum):

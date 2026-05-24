@@ -9,7 +9,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from roundtable.models import PipelineResult
+from roundtable.models import PipelineResult, ReviewResult
 from roundtable.evidence import build_evidence_packet
 from roundtable.orchestrator import run_orchestrator, run_orchestrator_async
 from roundtable.supervisor import review_claims, review_claims_async
@@ -205,6 +205,11 @@ class RoundtableService:
         # Budget: estimate contradiction detection
         budget.consume(budget.estimate(3000, 2000), "supervisor_review")
 
+        # 3.5. Search Verification (Phase 7A) — only for NEEDS_USER claims
+        await self._search_verify_pending(
+            session_id, supervisor_reviews, agent_reviews, budget,
+        )
+
         # 4. Memory — auto-write high-confidence approved claims
         memories_written = 0
         if self.memory_store is not None:
@@ -243,6 +248,38 @@ class RoundtableService:
             pending_confirmation_count=pending_count,
         )
 
+    async def _search_verify_pending(
+        self, session_id: str, supervisor_reviews, agent_reviews, budget,
+    ) -> None:
+        """Phase 7A: 对 NEEDS_USER_CONFIRMATION 的 claim 做搜索校验。"""
+        from roundtable.search import SearchAdapter
+        from roundtable.verify import verify_pending_claims
+
+        pending = [
+            sr for sr in supervisor_reviews
+            if sr.review_result == ReviewResult.NEEDS_USER_CONFIRMATION
+        ]
+        if not pending:
+            return
+
+        logger.info("[%s] Search-verify: %d pending claims", session_id, len(pending))
+
+        adapter = SearchAdapter(backend="mock")
+        search_results = {}
+
+        for sr in pending[:3]:
+            query = _claim_to_query(sr.claim_id, agent_reviews)
+            if not query:
+                continue
+            result = await adapter.search(query)
+            search_results[query] = result
+
+        if search_results:
+            await verify_pending_claims(
+                supervisor_reviews, agent_reviews, search_results, provider=self.provider,
+            )
+            logger.info("[%s] Search-verify complete: %d queries", session_id, len(search_results))
+
     def run_pipeline_sync(
         self,
         session_id: str,
@@ -274,3 +311,13 @@ def _build_forbidden_map(agent_ids: list[str]) -> dict[str, list[str]]:
         except KeyError:
             result[aid] = []
     return result
+
+
+def _claim_to_query(claim_id: str, agent_reviews) -> str:
+    """Generate a search query from a claim's content."""
+    for ar in agent_reviews:
+        for claim in ar.claims:
+            if claim.claim_id == claim_id:
+                # Take first 100 chars as query
+                return claim.content[:100]
+    return ""
