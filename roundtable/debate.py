@@ -31,9 +31,11 @@ class DebateEngine:
         self,
         provider=None,
         budget=None,
+        domain_name: str | None = None,
     ):
         self.provider = provider
         self.budget = budget
+        self.domain_name = domain_name
 
     async def run_debate(
         self,
@@ -91,8 +93,9 @@ class DebateEngine:
         if self.provider is not None:
             return await run_orchestrator_async(
                 evidence, agent_count=len(agents), provider=self.provider,
+                domain_name=self.domain_name,
             )
-        return run_orchestrator(evidence, agent_count=len(agents))
+        return run_orchestrator(evidence, agent_count=len(agents), domain_name=self.domain_name)
 
     # ── Peer map ──
 
@@ -144,17 +147,26 @@ class DebateEngine:
             # Mock 降级: 模板化辩论
             review = agent._analyze_debate_mock(evidence, peers)
 
-        for i, claim in enumerate(review.claims):
-            # 从 mock/LLM 产出的 claim 中推断 position 和 target
-            position = "extend"  # default
-            target_claim_id = None
+        # Read raw claims data for position (Bug 5: preserved from LLM parse)
+        raw_claims = getattr(agent, '_last_raw_claims', []) or []
 
-            # 尝试从 content 中提取 target 引用
-            for pr in peers:
-                for pc in pr.claims:
-                    if pc.claim_id in claim.content:
-                        target_claim_id = pc.claim_id
-                        break
+        for i, claim in enumerate(review.claims):
+            # Read position from raw LLM response (fallback to "extend")
+            position = "extend"
+            if i < len(raw_claims):
+                position = raw_claims[i].get("position", "extend")
+
+            # Read target_claim_id from raw LLM response or infer from content
+            target_claim_id = None
+            if i < len(raw_claims):
+                target_claim_id = raw_claims[i].get("target_claim_id")
+            if not target_claim_id:
+                # Fallback: infer from content
+                for pr in peers:
+                    for pc in pr.claims:
+                        if pc.claim_id in claim.content:
+                            target_claim_id = pc.claim_id
+                            break
 
             arg = DebateArgument(
                 argument_id=f"arg_r2_{agent_id}_{i:03d}",

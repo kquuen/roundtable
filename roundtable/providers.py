@@ -35,6 +35,7 @@ class ProviderAdapter:
         self.provider = provider
         self.model = model or self.DEFAULT_MODEL
         self._api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        self.budget = None  # TokenBudget injected by service layer (Bug 7)
 
         if provider == "deepseek":
             if not self._api_key:
@@ -75,6 +76,11 @@ class ProviderAdapter:
                     temperature=temperature,
                 )
                 content = response.choices[0].message.content
+
+                # Consume real token count from API response (Bug 7)
+                if self.budget is not None and response.usage is not None:
+                    self.budget.consume(response.usage.total_tokens, "chat")
+
                 return content or ""
 
             except Exception as e:

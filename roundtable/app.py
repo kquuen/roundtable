@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from importlib.metadata import version
 from pathlib import Path
 from typing import Optional
 
@@ -34,7 +35,7 @@ class Utf8JSONResponse(JSONResponse):
             separators=(",", ":"),
         ).encode("utf-8")
 
-from roundtable.models import SessionStatus, SessionMode, ReviewResult
+from roundtable.models import SessionStatus, SessionMode, ReviewResult, AgentReview, SupervisorReview
 from roundtable.evidence import build_evidence_packet
 from roundtable.team import classify_session, recommend_teams
 from roundtable.providers import get_provider, ProviderAdapter
@@ -117,7 +118,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="圆桌会议 Roundtable API",
-    version="0.3.0",
+    version=version("roundtable"),
     description="AI 专家圆桌工作台后端 API — LLM 驱动 + 持久化",
     lifespan=lifespan,
     default_response_class=Utf8JSONResponse,
@@ -128,6 +129,14 @@ _allowed_origins = os.getenv(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:3000,http://localhost:5173",
 ).split(",")
+
+if "*" in _allowed_origins and True:  # allow_credentials=True below
+    logger.warning(
+        "CORS: allow_origins='*' is incompatible with allow_credentials=True. "
+        "Browsers will reject credentialed requests from cross-origin pages. "
+        "Set CORS_ALLOWED_ORIGINS to specific origins in production."
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -410,6 +419,15 @@ async def recommend_team(req: UploadEvidenceRequest):
 
 # ── Memory ──
 
+@app.get("/memory/search")
+async def search_memory(q: str = "", limit: int = 20):
+    """Keyword search across all memory entries."""
+    if not q:
+        return {"results": [], "query": ""}
+    results = _memory.search(q, limit=limit)
+    return {"query": q, "result_count": len(results), "results": results}
+
+
 @app.get("/memory/{session_id}")
 async def get_memory(session_id: str):
     """Get auto-written memory entries for a session."""
@@ -419,15 +437,6 @@ async def get_memory(session_id: str):
         "entry_count": len(entries),
         "entries": entries,
     }
-
-
-@app.get("/memory/search")
-async def search_memory(q: str = "", limit: int = 20):
-    """Keyword search across all memory entries."""
-    if not q:
-        return {"results": [], "query": ""}
-    results = _memory.search(q, limit=limit)
-    return {"query": q, "result_count": len(results), "results": results}
 
 
 @app.post("/skills/reload")

@@ -104,16 +104,27 @@ class RoundtableService:
         from roundtable.orchestrator import create_agents as _create_agents
 
         budget = TokenBudget(max_tokens=max_tokens)
+
+        # Inject budget into provider for real token tracking (Bug 7)
+        if self.provider is not None:
+            self.provider.budget = budget
+
         logger.info("[%s] Debate pipeline start: mode=%s, agents=%d", session_id, mode, agent_count)
 
         # 1. Evidence
         evidence = build_evidence_packet(session_id, mode, segments)
 
+        # 0. Domain classification
+        from roundtable.domain import classify_domain
+        domain = await classify_domain(evidence, provider=self.provider)
+        domain_name = domain.name
+        logger.info("[%s] Debate domain classified: %s", session_id, domain_name)
+
         # 2. Create agents
-        agents = _create_agents(agent_count=agent_count, provider=self.provider)
+        agents = _create_agents(agent_count=agent_count, provider=self.provider, domain_name=domain_name)
 
         # 3. Run debate
-        engine = DebateEngine(provider=self.provider, budget=budget)
+        engine = DebateEngine(provider=self.provider, budget=budget, domain_name=domain_name)
         debate_session = await engine.run_debate(evidence, agents)
 
         # 4. Build report
@@ -160,6 +171,10 @@ class RoundtableService:
             PipelineResult with report, reviews, and metadata
         """
         budget = TokenBudget(max_tokens=max_tokens)
+
+        # Inject budget into provider for real token tracking (Bug 7)
+        if self.provider is not None:
+            self.provider.budget = budget
 
         # 1. Evidence
         logger.info("[%s] Pipeline start: mode=%s, agents=%d, budget=%d",
@@ -254,8 +269,13 @@ class RoundtableService:
 
     async def _search_verify_pending(
         self, session_id: str, supervisor_reviews, agent_reviews, budget,
+        max_search_claims: int = 3,
     ) -> None:
-        """Phase 7A: 对 NEEDS_USER_CONFIRMATION 的 claim 做搜索校验。"""
+        """Phase 7A: 对 NEEDS_USER_CONFIRMATION 的 claim 做搜索校验。
+
+        Args:
+            max_search_claims: Max claims to search-verify (0 = unlimited). Default 3.
+        """
         from roundtable.search import SearchAdapter
         from roundtable.verify import verify_pending_claims
 
@@ -274,7 +294,15 @@ class RoundtableService:
         adapter = SearchAdapter(backend=search_backend)
         search_results = {}
 
-        for sr in pending[:3]:
+        to_search = pending if max_search_claims <= 0 else pending[:max_search_claims]
+        skipped = len(pending) - len(to_search)
+        if skipped > 0:
+            logger.info(
+                "[%s] Search-verify: skipping %d/%d claims (max_search_claims=%d)",
+                session_id, skipped, len(pending), max_search_claims,
+            )
+
+        for sr in to_search:
             query = _claim_to_query(sr.claim_id, agent_reviews)
             if not query:
                 continue

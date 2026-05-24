@@ -80,6 +80,9 @@ class Agent:
                 recommended_next_actions=["检查 API 响应格式"],
             )
 
+        # Preserve raw claims data for debate position lookup (Bug 5)
+        self._last_raw_claims = parsed.get("claims", [])
+
         # Resolve evidence_text → chunk_id via semantic linker
         evidence_map = await self._link_evidence(parsed, evidence)
 
@@ -229,13 +232,6 @@ class Agent:
         )
 
 
-        raise NotImplementedError(
-            f"Agent '{self.agent_id}' has no mock analysis implementation "
-            f"and no ProviderAdapter configured. "
-            f"Either inject a ProviderAdapter or override _analyze_mock()."
-        )
-
-
 # ── Built-in agents ──
 
 
@@ -282,7 +278,7 @@ class ProductManager(Agent):
                 agent_id=self.agent_id,
                 claim_type=ClaimType.RECOMMENDATION,
                 content="根据讨论内容，建议优先聚焦 MVP 核心范围，将非关键特性推迟到后续阶段。",
-                evidence_ids=[claims[0].claim_id],
+                evidence_ids=[],
                 confidence=0.78,
             ))
         return AgentReview(

@@ -389,14 +389,20 @@ async def _detect_contradictions_async(
     Returns:
         (modified_reviews, conflict_pairs) — conflict_pairs for report display.
     """
+    # Build claim_id → agent_id lookup from agent_reviews
+    claim_agent_map: dict[str, str] = {}
+    for ar in agent_reviews:
+        for claim in ar.claims:
+            claim_agent_map[claim.claim_id] = ar.agent_id
+
     # Collect approved claims with their agent info
     approved = []
     review_index: dict[str, int] = {}  # claim_id → index in reviews
-    for i, (r, ar) in enumerate(zip(reviews, _flatten_claims(agent_reviews))):
+    for i, r in enumerate(reviews):
         if r.review_result == ReviewResult.APPROVED:
             approved.append({
                 "claim_id": r.claim_id,
-                "agent_id": ar.agent_id if isinstance(ar, AgentReview) else "unknown",
+                "agent_id": claim_agent_map.get(r.claim_id, "unknown"),
                 "content": _get_claim_content(r.claim_id, agent_reviews),
                 "claim_type": r.final_type or "unknown",
             })

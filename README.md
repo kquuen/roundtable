@@ -91,7 +91,7 @@ pip install -e .
 # 环境变量 (可选，不设则走 mock 模式)
 export DEEPSEEK_API_KEY="sk-..."      # LLM 分析
 export OPENAI_API_KEY="sk-..."        # Whisper 语音转写
-export SERPAPI_API_KEY="..."          # 搜索校验
+export SERPAPI_API_KEY="..."          # 搜索校验（需 pip install -e .[search]）
 
 # CLI
 python -m roundtable.main --transcript meeting.txt

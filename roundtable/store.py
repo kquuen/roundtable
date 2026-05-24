@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,8 @@ class SessionStore:
         self._evidence: dict[str, list[dict]] = {}
         self._agent_reviews: dict[str, list[dict]] = {}
         self._supervisor_reviews: dict[str, list[dict]] = {}
+        self._locks: dict[str, threading.Lock] = {}
+        self._index_lock = threading.Lock()
         self._load_all()
 
     # ── Load / Save ──
@@ -101,7 +104,7 @@ class SessionStore:
             self._supervisor_reviews[session_id] = sr_data
 
     def _save_one(self, session_id: str) -> None:
-        """Persist a single session to disk."""
+        """Persist a single session to disk (thread-safe per session)."""
         session = self._sessions.get(session_id)
         if not session:
             return
@@ -122,13 +125,16 @@ class SessionStore:
             "supervisor_reviews": self._supervisor_reviews.get(session_id, []),
         }
 
-        path = self._session_path(session_id)
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        lock = self._locks.setdefault(session_id, threading.Lock())
+        with lock:
+            path = self._session_path(session_id)
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _save_index(self) -> None:
-        """Persist the session index."""
+        """Persist the session index (thread-safe)."""
         idx = {"sessions": list(self._sessions.keys())}
-        self._index_path.write_text(json.dumps(idx, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._index_lock:
+            self._index_path.write_text(json.dumps(idx, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _session_path(self, session_id: str) -> Path:
         _validate_session_id(session_id)

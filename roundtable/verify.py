@@ -68,19 +68,21 @@ async def verify_pending_claims(
         if claim is None:
             continue
 
-        # Find relevant search result (first matching query)
-        relevant = None
-        for query, result in search_results.items():
-            # Simple: check if any claim keyword appears in query
-            claim_words = set(claim.content[:30].split())
-            query_words = set(query.split())
-            if claim_words & query_words:
-                relevant = result
-                break
-        if relevant is None and search_results:
-            relevant = list(search_results.values())[0]  # Use first
+        # Find relevant search result by matching the query key (claim.content[:100])
+        query_key = claim.content[:100]
+        relevant = search_results.get(query_key)
+        # Fallback: try partial prefix match if exact key not found
+        if relevant is None:
+            for query, result in search_results.items():
+                if query[:50] in claim.content or claim.content[:50] in query:
+                    relevant = result
+                    break
 
         if relevant is None:
+            logger.warning(
+                "No matching search result for claim %s (query=%s)",
+                sr.claim_id, query_key[:60],
+            )
             claim.verification = VerificationStatus.NO_EVIDENCE_FOUND
             continue
 
