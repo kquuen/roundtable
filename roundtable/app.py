@@ -443,30 +443,21 @@ class MemoryConfirmRequest(BaseModel):
 
 @app.get("/session/{session_id}/pending")
 async def get_pending(session_id: str):
-    """获取当前 session 中需要用户裁决的所有待办项。"""
+    """获取当前 session 中需要用户裁决的所有待办项。
+
+    读取 /roundtable/run 时持久化的 reviews，而非重新分析。
+    """
     s = _store.get(session_id)
     if not s:
         raise HTTPException(404, "Session not found")
 
-    segments = _store.get_evidence(session_id)
-    if not segments:
+    ar_dicts, sr_dicts = _store.get_reviews(session_id)
+    if not ar_dicts or not sr_dicts:
         return {"session_id": session_id, "pending": [], "status": s.status.value}
 
-    # 执行轻量分析以获取当前审查状态
-    from roundtable.evidence import build_evidence_packet
-    from roundtable.orchestrator import run_orchestrator
-    from roundtable.supervisor import review_claims
-    from roundtable.services import _build_forbidden_map
-
-    evidence = build_evidence_packet(session_id, s.mode, segments)
-    agent_reviews = run_orchestrator(evidence, agent_count=3)
-    agent_ids = list({ar.agent_id for ar in agent_reviews})
-    agent_forbidden = _build_forbidden_map(agent_ids)
-    supervisor_reviews = review_claims(
-        agent_reviews, evidence,
-        mode=s.mode,
-        agent_forbidden=agent_forbidden,
-    )
+    # Reconstruct from stored dicts
+    agent_reviews = [AgentReview(**d) for d in ar_dicts]
+    supervisor_reviews = [SupervisorReview(**d) for d in sr_dicts]
 
     pending = get_pending_items(supervisor_reviews, agent_reviews)
 
@@ -482,32 +473,20 @@ async def get_pending(session_id: str):
 async def confirm_review(req: ConfirmReviewRequest):
     """用户对 NEEDS_CONFIRMATION 的 claim 提交裁决。
 
-    接收批量裁决，更新 SupervisorReview 和 ClaimLifecycle。
+    读取 /roundtable/run 时持久化的 reviews，应用用户裁决。
     所有裁决处理完毕后，将 session 状态变为 COMPLETED。
     """
     s = _store.get(req.session_id)
     if not s:
         raise HTTPException(404, "Session not found")
 
-    segments = _store.get_evidence(req.session_id)
-    if not segments:
-        raise HTTPException(400, "No evidence found — run /roundtable/run first")
+    ar_dicts, sr_dicts = _store.get_reviews(req.session_id)
+    if not ar_dicts or not sr_dicts:
+        raise HTTPException(400, "No reviews found — run /roundtable/run first")
 
-    # 重建当前的分析结果以应用裁决
-    from roundtable.evidence import build_evidence_packet
-    from roundtable.orchestrator import run_orchestrator
-    from roundtable.supervisor import review_claims
-    from roundtable.services import _build_forbidden_map
-
-    evidence = build_evidence_packet(req.session_id, s.mode, segments)
-    agent_reviews = run_orchestrator(evidence, agent_count=3)
-    agent_ids = list({ar.agent_id for ar in agent_reviews})
-    agent_forbidden = _build_forbidden_map(agent_ids)
-    supervisor_reviews = review_claims(
-        agent_reviews, evidence,
-        mode=s.mode,
-        agent_forbidden=agent_forbidden,
-    )
+    # Reconstruct from stored dicts (no re-analysis)
+    agent_reviews = [AgentReview(**d) for d in ar_dicts]
+    supervisor_reviews = [SupervisorReview(**d) for d in sr_dicts]
 
     # 解析并应用用户裁决
     verdicts = []

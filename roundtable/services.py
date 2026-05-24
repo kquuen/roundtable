@@ -202,6 +202,10 @@ class RoundtableService:
         )
         logger.info("[%s] Supervisor review complete: %d claims reviewed", session_id, len(supervisor_reviews))
 
+        # Persist reviews so /pending and /review/confirm don't re-analyze
+        if self.session_store is not None:
+            self.session_store.store_reviews(session_id, agent_reviews, supervisor_reviews)
+
         # Budget: estimate contradiction detection
         budget.consume(budget.estimate(3000, 2000), "supervisor_review")
 

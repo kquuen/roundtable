@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from roundtable.models import Session, SessionStatus, SessionMode
+from roundtable.models import Session, SessionStatus, SessionMode, AgentReview, SupervisorReview
 
 
 def _validate_session_id(session_id: str) -> str:
@@ -40,6 +41,8 @@ class SessionStore:
         self._index_path = self.base_dir / "_index.json"
         self._sessions: dict[str, Session] = {}
         self._evidence: dict[str, list[dict]] = {}
+        self._agent_reviews: dict[str, list[dict]] = {}
+        self._supervisor_reviews: dict[str, list[dict]] = {}
         self._load_all()
 
     # ── Load / Save ──
@@ -121,7 +124,7 @@ class SessionStore:
 
     def create(self, title: str = "", mode: str = "meeting") -> Session:
         """Create a new session and persist it."""
-        sid = f"s_{len(self._sessions) + 1:03d}"
+        sid = f"s_{uuid.uuid4().hex[:8]}"
         session = Session(
             session_id=sid,
             mode=SessionMode(mode),
@@ -159,6 +162,24 @@ class SessionStore:
     def get_evidence(self, session_id: str) -> list[dict]:
         """Retrieve stored evidence segments."""
         return self._evidence.get(session_id, [])
+
+    def store_reviews(
+        self,
+        session_id: str,
+        agent_reviews: list[AgentReview],
+        supervisor_reviews: list[SupervisorReview],
+    ) -> None:
+        """Persist reviews for later retrieval by /pending and /review/confirm."""
+        self._agent_reviews[session_id] = [ar.model_dump() for ar in agent_reviews]
+        self._supervisor_reviews[session_id] = [sr.model_dump() for sr in supervisor_reviews]
+        self._save_one(session_id)
+
+    def get_reviews(self, session_id: str) -> tuple[list[dict], list[dict]]:
+        """Retrieve stored reviews. Returns (agent_reviews, supervisor_reviews)."""
+        return (
+            self._agent_reviews.get(session_id, []),
+            self._supervisor_reviews.get(session_id, []),
+        )
 
     def session_count(self) -> int:
         return len(self._sessions)
