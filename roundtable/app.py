@@ -34,7 +34,7 @@ class Utf8JSONResponse(JSONResponse):
             separators=(",", ":"),
         ).encode("utf-8")
 
-from roundtable.models import SessionStatus, SessionMode
+from roundtable.models import SessionStatus, SessionMode, ReviewResult
 from roundtable.evidence import build_evidence_packet
 from roundtable.team import classify_session, recommend_teams
 from roundtable.providers import get_provider, ProviderAdapter
@@ -43,6 +43,12 @@ from roundtable.memory import MemoryStore
 from roundtable.services import RoundtableService
 from roundtable.skills import load_from_directory, reload_skills, list_skills
 from roundtable.logging_config import setup_logging
+from roundtable.feedback import (
+    UserVerdict, UserCorrection,
+    process_user_verdict, apply_bulk_verdicts,
+    process_user_correction, process_user_answer,
+    update_memory_confirmation, get_pending_items,
+)
 
 setup_logging()
 
@@ -242,13 +248,19 @@ async def run_roundtable(req: RunRoundtableRequest):
         lang=req.lang,
     )
 
-    _store.update_status(req.session_id, SessionStatus.COMPLETED)
+    # After analysis, wait for user review — don't complete yet
+    if result.pending_confirmation_count > 0:
+        _store.update_status(req.session_id, SessionStatus.REVIEWING)
+    else:
+        _store.update_status(req.session_id, SessionStatus.COMPLETED)
 
     return {
         "session_id": result.session_id,
         "mode": result.mode,
         "report_path": result.report_path,
         "memories_written": result.memories_written,
+        "pending_confirmation_count": result.pending_confirmation_count,
+        "status": "reviewing" if result.pending_confirmation_count > 0 else "completed",
         "report": result.report,
     }
 
@@ -300,6 +312,175 @@ async def reload_skills_endpoint():
         "total_skills": result["total"],
         "skill_ids": result["skill_ids"],
     }
+
+
+# ── 人在回路：用户反馈、裁决、记忆确认 ──
+
+class ConfirmReviewRequest(BaseModel):
+    session_id: str
+    verdicts: list[dict]  # [{claim_id, decision: confirm|reject|retype, new_type?, note?}]
+
+
+class FeedbackRequest(BaseModel):
+    session_id: str
+    corrections: list[dict] = []  # [{target, correction, reason}]
+    answers: list[dict] = []      # [{question, answer}]
+
+
+class MemoryConfirmRequest(BaseModel):
+    session_id: str
+    memory_id: str
+    confirmed: bool
+
+
+@app.get("/session/{session_id}/pending")
+async def get_pending(session_id: str):
+    """获取当前 session 中需要用户裁决的所有待办项。"""
+    s = _store.get(session_id)
+    if not s:
+        raise HTTPException(404, "Session not found")
+
+    segments = _store.get_evidence(session_id)
+    if not segments:
+        return {"session_id": session_id, "pending": [], "status": s.status.value}
+
+    # 执行轻量分析以获取当前审查状态
+    from roundtable.evidence import build_evidence_packet
+    from roundtable.orchestrator import run_orchestrator
+    from roundtable.supervisor import review_claims
+    from roundtable.services import _build_forbidden_map
+
+    evidence = build_evidence_packet(session_id, s.mode, segments)
+    agent_reviews = run_orchestrator(evidence, agent_count=3)
+    agent_ids = list({ar.agent_id for ar in agent_reviews})
+    agent_forbidden = _build_forbidden_map(agent_ids)
+    supervisor_reviews = review_claims(
+        agent_reviews, evidence,
+        mode=s.mode,
+        agent_forbidden=agent_forbidden,
+    )
+
+    pending = get_pending_items(supervisor_reviews, agent_reviews)
+
+    return {
+        "session_id": session_id,
+        "status": s.status.value,
+        "pending_count": len(pending),
+        "pending": pending,
+    }
+
+
+@app.post("/review/confirm")
+async def confirm_review(req: ConfirmReviewRequest):
+    """用户对 NEEDS_CONFIRMATION 的 claim 提交裁决。
+
+    接收批量裁决，更新 SupervisorReview 和 ClaimLifecycle。
+    所有裁决处理完毕后，将 session 状态变为 COMPLETED。
+    """
+    s = _store.get(req.session_id)
+    if not s:
+        raise HTTPException(404, "Session not found")
+
+    segments = _store.get_evidence(req.session_id)
+    if not segments:
+        raise HTTPException(400, "No evidence found — run /roundtable/run first")
+
+    # 重建当前的分析结果以应用裁决
+    from roundtable.evidence import build_evidence_packet
+    from roundtable.orchestrator import run_orchestrator
+    from roundtable.supervisor import review_claims
+    from roundtable.services import _build_forbidden_map
+
+    evidence = build_evidence_packet(req.session_id, s.mode, segments)
+    agent_reviews = run_orchestrator(evidence, agent_count=3)
+    agent_ids = list({ar.agent_id for ar in agent_reviews})
+    agent_forbidden = _build_forbidden_map(agent_ids)
+    supervisor_reviews = review_claims(
+        agent_reviews, evidence,
+        mode=s.mode,
+        agent_forbidden=agent_forbidden,
+    )
+
+    # 解析并应用用户裁决
+    verdicts = []
+    errors = []
+    for v_dict in req.verdicts:
+        try:
+            verdicts.append(UserVerdict.from_dict(v_dict))
+        except ValueError as e:
+            errors.append({"input": v_dict, "error": str(e)})
+
+    if errors:
+        raise HTTPException(400, f"Invalid verdicts: {errors}")
+
+    result = apply_bulk_verdicts(verdicts, supervisor_reviews, agent_reviews)
+
+    # 所有待确认项都处理完后，标记完成
+    remaining_pending = sum(
+        1 for sr in supervisor_reviews
+        if sr.review_result == ReviewResult.NEEDS_USER_CONFIRMATION
+    )
+    if remaining_pending == 0:
+        _store.update_status(req.session_id, SessionStatus.COMPLETED)
+
+    # 重新生成报告
+    from roundtable.report import compose_report
+    report = compose_report(agent_reviews, supervisor_reviews, session_title=s.title)
+
+    return {
+        "session_id": req.session_id,
+        "verdicts_applied": result["applied"],
+        "verdicts_failed": result["failed"],
+        "remaining_pending": remaining_pending,
+        "status": "completed" if remaining_pending == 0 else "reviewing",
+        "report": report,
+        "details": result["details"],
+    }
+
+
+@app.post("/session/{session_id}/feedback")
+async def submit_feedback(session_id: str, req: FeedbackRequest):
+    """提交用户反馈：纠正系统推断 + 回答问题。"""
+    s = _store.get(session_id)
+    if not s:
+        raise HTTPException(404, "Session not found")
+
+    correction_results = []
+    for c_dict in req.corrections:
+        try:
+            corr = UserCorrection.from_dict(c_dict)
+            r = process_user_correction(corr)
+            correction_results.append(r)
+        except Exception as e:
+            correction_results.append({"error": str(e), "input": c_dict})
+
+    answer_results = []
+    for a_dict in req.answers:
+        r = process_user_answer(
+            session_id,
+            a_dict.get("question", ""),
+            a_dict.get("answer", ""),
+        )
+        answer_results.append(r)
+
+    return {
+        "session_id": session_id,
+        "corrections_recorded": len([r for r in correction_results if r.get("recorded")]),
+        "answers_recorded": len([r for r in answer_results if r.get("recorded")]),
+        "corrections": correction_results,
+        "answers": answer_results,
+    }
+
+
+@app.post("/memory/confirm")
+async def confirm_memory(req: MemoryConfirmRequest):
+    """用户确认或驳回一条自动写入的记忆条目。"""
+    result = update_memory_confirmation(
+        _memory, req.session_id, req.memory_id, req.confirmed,
+    )
+    if not result.get("updated"):
+        raise HTTPException(404, "Memory entry not found or could not be updated")
+    return result
 
 
 @app.get("/skills")

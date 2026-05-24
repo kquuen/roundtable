@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 from roundtable.models import AgentReview, SupervisorReview, ReviewResult
+
+logger = logging.getLogger(__name__)
 
 # ── Bilingual section titles ──
 
@@ -55,7 +59,58 @@ class _Titles:
         self._data = data
 
     def __getitem__(self, key: str) -> str:
+        if key not in self._data:
+            logger.warning("Report section title key '%s' missing from lang dict — rendering as-is", key)
         return self._data.get(key, key)
+
+
+# ── Tag helpers for boundary classification and lifecycle ──
+
+def _boundary_tag(review) -> str:
+    """Return a visual tag for boundary classification, or empty string."""
+    bc = getattr(review, "boundary_classification", None)
+    if bc is None:
+        return ""
+    val = bc.value if hasattr(bc, "value") else str(bc)
+    if val == "violation":
+        return "[VIOLATION]"
+    if val == "borderline":
+        return "[⚠️ 边界模糊]"
+    return ""
+
+
+def _lifecycle_tag(claim) -> str:
+    """Return a visual tag for claim lifecycle, or empty string."""
+    lc = getattr(claim, "lifecycle", None)
+    if lc is None:
+        return ""
+    val = lc.value if hasattr(lc, "value") else str(lc)
+    if val == "user_confirmed":
+        return "[✓ 用户已确认]"
+    if val == "user_rejected":
+        return "[✗ 用户已驳回]"
+    if val == "needs_user":
+        return "[⚠️ 待用户裁决]"
+    if val == "challenged":
+        return "[⚡ 被质疑]"
+    return ""
+
+
+def _consensus_tag(claim) -> str:
+    """Return a visual tag for consensus level, or empty string."""
+    cl = getattr(claim, "consensus_level", None)
+    if cl is None:
+        return ""
+    val = cl.value if hasattr(cl, "value") else str(cl)
+    if val == "strong":
+        return "[3/3 共识]"
+    if val == "majority":
+        return "[2/3 共识]"
+    if val == "isolated":
+        return "[孤立观点]"
+    if val == "contradicted":
+        return "[矛盾]"
+    return ""
 
 
 def compose_report(
@@ -77,24 +132,29 @@ def compose_report(
     inferences: list[tuple[str, str]] = []
     recommendations: list[tuple[str, str]] = []
     extensions: list[tuple[str, str]] = []
-    rejected: list[tuple[str, str, str]] = []  # (agent_id, content, reason)
+    rejected: list[tuple[str, str, str, str]] = []  # (agent_id, content, reason, boundary_tag)
     downgraded: list[tuple[str, str, str]] = []
-    needs_confirm: list[tuple[str, str]] = []
+    needs_confirm: list[tuple[str, str, str]] = []  # (agent_id, content, boundary_tag)
 
     for ar in agent_reviews:
         for c in ar.claims:
             r = review_map.get(c.claim_id)
             if not r:
                 continue
+            boundary_tag = _boundary_tag(r)
+            lifecycle_tag = _lifecycle_tag(c)
+
             if r.review_result == ReviewResult.REJECTED:
-                rejected.append((ar.agent_id, c.content, r.reason))
+                rejected.append((ar.agent_id, c.content, r.reason, boundary_tag))
             elif r.review_result == ReviewResult.DOWNGRADED:
                 downgraded.append((ar.agent_id, r.final_type or c.claim_type, c.content))
             elif r.review_result == ReviewResult.NEEDS_USER_CONFIRMATION:
-                needs_confirm.append((ar.agent_id, c.content))
+                needs_confirm.append((ar.agent_id, c.content, f"{boundary_tag} {lifecycle_tag}".strip()))
             else:  # APPROVED
                 final_type = r.final_type or c.claim_type
-                item = (ar.agent_id, c.content)
+                consensus_tag = _consensus_tag(c)
+                tag_str = f" {_boundary_tag(r)}" if boundary_tag else f" {consensus_tag}" if consensus_tag else ""
+                item = (ar.agent_id, f"{c.content}{tag_str}".rstrip())
                 if final_type == "fact":
                     facts.append(item)
                 elif final_type == "inference":
@@ -155,15 +215,17 @@ def compose_report(
     # 7. Rejected (hallucinations)
     if rejected:
         lines.append(f"## {t['rejected']}")
-        for agent_id, content, reason in rejected:
-            lines.append(f"- [{agent_id}] {content} — _{reason}_")
+        for agent_id, content, reason, boundary_tag in rejected:
+            tag = f" {boundary_tag}" if boundary_tag else ""
+            lines.append(f"- [{agent_id}] {content} — _{reason}_{tag}")
         lines.append("")
 
     # 8. Needs user confirmation
     if needs_confirm:
         lines.append(f"## {t['needs_confirm']}")
-        for agent_id, content in needs_confirm:
-            lines.append(f"- [{agent_id}] {content}")
+        for agent_id, content, tag in needs_confirm:
+            tag_str = f" [{tag}]" if tag else ""
+            lines.append(f"- [{agent_id}] {content}{tag_str}")
         lines.append("")
 
     # 9. Open questions

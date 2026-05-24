@@ -13,7 +13,7 @@ from typing import Optional
 
 from roundtable.models import (
     AgentReview, ClaimType, EvidenceClaim, EvidencePacket,
-    SupervisorReview, ReviewResult,
+    SupervisorReview, ReviewResult, BoundaryClass,
 )
 from roundtable.utils import run_async_safely
 
@@ -49,9 +49,11 @@ def review_claims(
             # Step 2: Forbidden rule check (overrides approval if violated)
             if r.review_result == ReviewResult.APPROVED and agent_forbidden:
                 forbidden = agent_forbidden.get(ar.agent_id, [])
-                fb_result = _check_forbidden(claim, forbidden)
+                fb_result, boundary = _check_forbidden(claim, forbidden)
                 if fb_result:
                     r = fb_result
+                elif boundary is not None:
+                    r.boundary_classification = boundary
 
             reviews.append(r)
 
@@ -67,7 +69,7 @@ def review_claims(
                 "矛盾检测跳过：在事件循环中调用了同步 review_claims，请使用 review_claims_async"
             )
         except Exception:
-            pass  # Contradiction detection is best-effort
+            logger.warning("矛盾检测异常，已跳过：", exc_info=True)
 
     return reviews
 
@@ -88,9 +90,11 @@ async def review_claims_async(
             r = _review_single_claim(claim, valid_chunk_ids, mode)
             if r.review_result == ReviewResult.APPROVED and agent_forbidden:
                 forbidden = agent_forbidden.get(ar.agent_id, [])
-                fb_result = _check_forbidden(claim, forbidden)
+                fb_result, boundary = _check_forbidden(claim, forbidden)
                 if fb_result:
                     r = fb_result
+                elif boundary is not None:
+                    r.boundary_classification = boundary
             reviews.append(r)
 
     # 直接 await，不再 asyncio.run()
@@ -164,92 +168,149 @@ def _review_single_claim(
     )
 
 
-# ── Forbidden rule enforcement ──
+# ── Forbidden rule enforcement (v5: 3-tier dynamic classification) ──
+
+def classify_boundary_crossing(
+    claim: EvidenceClaim,
+    forbidden: list[str],
+) -> BoundaryClass:
+    """判定一个 claim 是否越界，以及严重程度。
+
+    三级分类：
+    - SAFE: 明确在领域内，没有触发任何 forbidden 规则
+    - BORDERLINE: 踩线但不严重——有关键词匹配但置信度低，
+      或 claim 内容有领域交叉但非断言性语言
+    - VIOLATION: 明确越界——断言性语言 + 明确触犯 forbidden 规则
+    """
+    if not forbidden:
+        return BoundaryClass.SAFE
+
+    content = claim.content
+
+    hedging = any(kw in content for kw in ["可能", "也许", "考虑", "或可", "不妨"])
+    asserting = any(kw in content for kw in ["必须", "一定", "毫无疑问", "很明显", "肯定"])
+
+    violations = 0
+    borderlines = 0
+
+    if "把建议写成事实" in forbidden or "把推测写成事实" in forbidden:
+        rec_kw = ["建议", "推荐", "应该", "最好", "可以试试", "不妨"]
+        if claim.claim_type == ClaimType.FACT and any(kw in content for kw in rec_kw):
+            if asserting:
+                violations += 1
+            else:
+                borderlines += 1
+
+    if "断言技术架构的可行性" in forbidden:
+        tech_kw = ["架构", "并发", "吞吐", "延迟", "QPS", "数据库选型", "微服务", "扩展性"]
+        if any(kw in content for kw in tech_kw):
+            if hedging:
+                borderlines += 1
+            else:
+                violations += 1
+
+    if "对产品策略做判断" in forbidden:
+        prod_kw = ["用户价值", "产品定位", "市场策略", "定价", "竞品对比"]
+        if any(kw in content for kw in prod_kw):
+            if hedging:
+                borderlines += 1
+            else:
+                violations += 1
+
+    if "断言未确认的交付日期" in forbidden:
+        date_patterns = [r"\d+月\d+日", r"\d+周", r"Q[1-4]", r"下个月", r"本周", r"下周"]
+        if any(re.search(p, content) for p in date_patterns):
+            if hedging:
+                borderlines += 1
+            else:
+                violations += 1
+
+    if "评估技术难度" in forbidden:
+        diff_kw = ["技术难度", "实现复杂", "开发量大", "工作量", "人天", "人月"]
+        if any(kw in content for kw in diff_kw):
+            if hedging:
+                borderlines += 1
+            else:
+                violations += 1
+
+    if "在没有数据时断言市场规模" in forbidden:
+        if "市场规模" in content and "亿" in content:
+            if hedging:
+                borderlines += 1
+            else:
+                violations += 1
+
+    if "提出新的专家建议" in forbidden:
+        rec_kw = ["建议", "推荐", "应该做"]
+        if any(kw in content for kw in rec_kw):
+            borderlines += 1
+
+    if violations > 0:
+        return BoundaryClass.VIOLATION
+    if borderlines > 0:
+        return BoundaryClass.BORDERLINE
+    return BoundaryClass.SAFE
+
 
 def _check_forbidden(
     claim: EvidenceClaim,
     forbidden: list[str],
-) -> SupervisorReview | None:
+) -> tuple[SupervisorReview | None, BoundaryClass | None]:
     """Check if a claim violates the agent's forbidden rules.
 
-    Uses heuristic keyword matching against the provided forbidden rule list.
-    Returns a REJECTED review if violated, None if clean.
+    Returns:
+        (rejected_review_or_None, boundary_classification_or_None)
     """
-    if not forbidden:
-        return None
+    boundary = classify_boundary_crossing(claim, forbidden)
 
+    if boundary == BoundaryClass.SAFE:
+        return None, None
+
+    if boundary == BoundaryClass.BORDERLINE:
+        return None, BoundaryClass.BORDERLINE
+
+    reason = _build_violation_reason(claim, forbidden)
+    return (
+        SupervisorReview(
+            claim_id=claim.claim_id,
+            review_result=ReviewResult.REJECTED,
+            reason=reason,
+            boundary_classification=BoundaryClass.VIOLATION,
+        ),
+        BoundaryClass.VIOLATION,
+    )
+
+
+def _build_violation_reason(claim: EvidenceClaim, forbidden: list[str]) -> str:
+    """Build a human-readable reason for a forbidden rule violation."""
     content = claim.content
 
-    # Rule: "把建议写成事实" — if claim is FACT but uses recommendation language
-    if "把建议写成事实" in forbidden or "把推测写成事实" in forbidden:
-        rec_kw = ["建议", "推荐", "应该", "最好", "可以试试", "不妨"]
-        if claim.claim_type == ClaimType.FACT and any(kw in content for kw in rec_kw):
-            return SupervisorReview(
-                claim_id=claim.claim_id,
-                review_result=ReviewResult.REJECTED,
-                reason="违反规则：把建议/推测写成了事实。建议类内容应标记为 recommendation。",
-            )
-
-    # Rule: "断言技术架构的可行性" — product_manager forbids architecture claims
     if "断言技术架构的可行性" in forbidden:
         tech_kw = ["架构", "并发", "吞吐", "延迟", "QPS", "数据库选型", "微服务", "扩展性"]
         if any(kw in content for kw in tech_kw):
-            return SupervisorReview(
-                claim_id=claim.claim_id,
-                review_result=ReviewResult.REJECTED,
-                reason="违反规则：产品经理不应断言技术架构的可行性。",
-            )
+            return "违反规则：产品经理不应断言技术架构的可行性。[边界: VIOLATION]"
 
-    # Rule: "对产品策略做判断" — architect forbids product strategy
     if "对产品策略做判断" in forbidden:
         prod_kw = ["用户价值", "产品定位", "市场策略", "定价", "竞品对比"]
         if any(kw in content for kw in prod_kw):
-            return SupervisorReview(
-                claim_id=claim.claim_id,
-                review_result=ReviewResult.REJECTED,
-                reason="违反规则：架构师不应对产品策略做判断。",
-            )
+            return "违反规则：架构师不应对产品策略做判断。[边界: VIOLATION]"
 
-    # Rule: "断言未确认的交付日期" — project_manager
+    if "把建议写成事实" in forbidden or "把推测写成事实" in forbidden:
+        return "违反规则：把建议/推测写成了事实。[边界: VIOLATION]"
+
     if "断言未确认的交付日期" in forbidden:
-        date_patterns = [r"\d+月\d+日", r"\d+周", r"Q[1-4]", r"下个月", r"本周", r"下周"]
-        if any(re.search(p, content) for p in date_patterns):
-            return SupervisorReview(
-                claim_id=claim.claim_id,
-                review_result=ReviewResult.REJECTED,
-                reason="违反规则：项目经理不应断言未确认的交付日期。",
-            )
+        return "违反规则：项目经理不应断言未确认的交付日期。[边界: VIOLATION]"
 
-    # Rule: "评估技术难度" — project_manager
     if "评估技术难度" in forbidden:
-        diff_kw = ["技术难度", "实现复杂", "开发量大", "工作量", "人天", "人月"]
-        if any(kw in content for kw in diff_kw):
-            return SupervisorReview(
-                claim_id=claim.claim_id,
-                review_result=ReviewResult.REJECTED,
-                reason="违反规则：项目经理不应评估技术难度。",
-            )
+        return "违反规则：项目经理不应评估技术难度。[边界: VIOLATION]"
 
-    # Rule: "在没有数据时断言市场规模" — business_analyst
     if "在没有数据时断言市场规模" in forbidden:
-        if "市场规模" in content and "亿" in content:
-            return SupervisorReview(
-                claim_id=claim.claim_id,
-                review_result=ReviewResult.REJECTED,
-                reason="违反规则：商业分析师不应在没有数据时断言市场规模。",
-            )
+        return "违反规则：商业分析师不应在没有数据时断言市场规模。[边界: VIOLATION]"
 
-    # Rule: "提出新的专家建议" — supervisor agent
     if "提出新的专家建议" in forbidden:
-        rec_kw = ["建议", "推荐", "应该做"]
-        if any(kw in content for kw in rec_kw):
-            return SupervisorReview(
-                claim_id=claim.claim_id,
-                review_result=ReviewResult.REJECTED,
-                reason="违反规则：审查官不应提出新的专家建议。",
-            )
+        return "违反规则：审查官不应提出新的专家建议。[边界: VIOLATION]"
 
-    return None
+    return f"违反规则。[边界: VIOLATION]"
 
 
 # ── Cross-agent contradiction detection ──

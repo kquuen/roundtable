@@ -6,9 +6,12 @@ Writes high-confidence facts and decisions to data/memory/ for future recall.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger("roundtable.memory")
 
 from roundtable.models import (
     AgentReview, EvidenceClaim, MemoryWrite,
@@ -128,6 +131,32 @@ class MemoryStore:
             return json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return []
+
+    def update_entry(self, session_id: str, memory_id: str, updates: dict) -> bool:
+        """Update a single memory entry's fields (e.g. confirmed status).
+
+        Returns True if the entry was found and updated, False otherwise.
+        """
+        path = self.base_dir / f"{session_id}.json"
+        if not path.exists():
+            return False
+        try:
+            entries = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return False
+
+        updated = False
+        for entry in entries:
+            if entry.get("memory_id") == memory_id:
+                entry.update(updates)
+                entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+                updated = True
+                break
+
+        if updated:
+            path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.info("Memory entry %s updated: %s", memory_id, updates)
+        return updated
 
     def search(self, keyword: str, limit: int = 20) -> list[dict]:
         """Simple keyword search across all memory entries (O(n) scan)."""

@@ -60,6 +60,27 @@ class ClaimType(str, Enum):
     EXTENSION = "extension"
 
 
+# ── Claim Lifecycle ──
+
+class ClaimLifecycle(str, Enum):
+    """每个 claim 从产出到最终确认的完整生命周期。"""
+    DRAFT = "draft"
+    UNDER_REVIEW = "under_review"
+    CHALLENGED = "challenged"
+    NEEDS_USER = "needs_user"
+    USER_CONFIRMED = "user_confirmed"
+    USER_REJECTED = "user_rejected"
+
+
+class ConsensusLevel(str, Enum):
+    """多 Agent 对同一 claim 的共识强度。"""
+    STRONG = "strong"            # 3+/3 同意
+    MAJORITY = "majority"        # 2/3 同意
+    ISOLATED = "isolated"        # 1/3 孤立观点
+    CONTRADICTED = "contradicted" # 存在明确矛盾
+    UNKNOWN = "unknown"          # 尚未评估
+
+
 class EvidenceClaim(BaseModel):
     claim_id: str = Field(description="Unique claim id, e.g. c_001")
     agent_id: str = Field(description="Which agent made this claim")
@@ -71,6 +92,8 @@ class EvidenceClaim(BaseModel):
     )
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     status: str = Field(default="pending_review")
+    lifecycle: ClaimLifecycle = Field(default=ClaimLifecycle.DRAFT)
+    consensus_level: ConsensusLevel = Field(default=ConsensusLevel.UNKNOWN)
 
 
 class EvidencePacket(BaseModel):
@@ -118,12 +141,23 @@ class ReviewResult(str, Enum):
     NEEDS_USER_CONFIRMATION = "needs_user_confirmation"
 
 
+class BoundaryClass(str, Enum):
+    """Agent 输出是否越界的分级判定。"""
+    SAFE = "safe"              # 明确在自己领域内
+    BORDERLINE = "borderline"  # 踩线但可能合理
+    VIOLATION = "violation"    # 明确越界
+
+
 class SupervisorReview(BaseModel):
     claim_id: str
     review_result: ReviewResult
     final_type: Optional[str] = None
     reason: str = ""
     required_changes: List[str] = Field(default_factory=list)
+    boundary_classification: Optional[BoundaryClass] = Field(
+        default=None,
+        description="Agent 输出是否越界的分级判定",
+    )
 
 
 # ── Memory ──
@@ -162,6 +196,14 @@ class PipelineResult(BaseModel):
     report: str = ""
     report_path: str = ""
     memories_written: int = 0
+    pending_confirmation_count: int = Field(
+        default=0,
+        description="需要用户裁决的 claim 数量",
+    )
+    user_decisions_applied: int = Field(
+        default=0,
+        description="本次已应用的用户裁决数量",
+    )
 
 
 # ── Team ──

@@ -107,13 +107,20 @@ class RoundtableService:
         # 5. Report
         report = compose_report(agent_reviews, supervisor_reviews, session_title=title, lang=lang)
 
-        # 6. Archive report
+        # 6. Count pending confirmations
+        from roundtable.models import ReviewResult
+        pending_count = sum(
+            1 for sr in supervisor_reviews
+            if sr.review_result == ReviewResult.NEEDS_USER_CONFIRMATION
+        )
+
+        # 7. Archive report
         report_path = ""
         if self.report_store is not None:
             path = self.report_store.save(session_id, title or "Untitled", report)
             report_path = str(path)
 
-        logger.info("[%s] Pipeline complete: memories=%d", session_id, memories_written)
+        logger.info("[%s] Pipeline complete: memories=%d, pending=%d", session_id, memories_written, pending_count)
 
         return PipelineResult(
             session_id=session_id,
@@ -123,6 +130,7 @@ class RoundtableService:
             report=report,
             report_path=report_path,
             memories_written=memories_written,
+            pending_confirmation_count=pending_count,
         )
 
     def run_pipeline_sync(

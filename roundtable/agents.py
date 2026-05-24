@@ -307,7 +307,7 @@ class ProjectManager(Agent):
                         claim_id=f"c_pjm_{len(claims):03d}",
                         agent_id=self.agent_id,
                         claim_type=ClaimType.FACT,
-                        content=f"Timeline signal: {c.text[:80]}",
+                        content=f"时间线信号：{c.text[:80]}",
                         evidence_ids=[c.chunk_id],
                         confidence=0.80,
                     ))
@@ -318,16 +318,16 @@ class ProjectManager(Agent):
                 claim_id=f"c_pjm_{len(claims):03d}",
                 agent_id=self.agent_id,
                 claim_type=ClaimType.RECOMMENDATION,
-                content="Recommend breaking work into 2-week sprints with clear deliverables per phase.",
+                content="建议将工作拆分为 2 周冲刺，每个阶段有明确交付物。",
                 evidence_ids=[],
                 confidence=0.75,
             ))
         return AgentReview(
             agent_id=self.agent_id,
-            summary=f"Found {len(claims)} execution signal(s) from the discussion.",
+            summary=f"从讨论中发现 {len(claims)} 个执行规划信号。",
             claims=claims,
-            open_questions=["What is the team size?", "Are there external dependencies?"],
-            recommended_next_actions=["Break work into 2-week sprints.", "Set up weekly review checkpoints."],
+            open_questions=["团队规模是多少？", "是否有外部依赖？"],
+            recommended_next_actions=["将工作拆分为 2 周冲刺。", "设置每周审查检查点。"],
         )
 
 
