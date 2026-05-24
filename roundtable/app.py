@@ -247,7 +247,7 @@ async def speak(audio: UploadFile = File(...)):
 
         # Create session
         title = audio.filename or "语音输入"
-        session = _store.create_session(
+        session = _store.create(
             title=title,
             mode="personal_roundtable",
         )
@@ -501,6 +501,9 @@ async def confirm_review(req: ConfirmReviewRequest):
         raise HTTPException(400, f"Invalid verdicts: {errors}")
 
     result = apply_bulk_verdicts(verdicts, supervisor_reviews, agent_reviews)
+
+    # Persist updated reviews so verdicts survive restarts
+    _store.store_reviews(req.session_id, agent_reviews, supervisor_reviews)
 
     # 所有待确认项都处理完后，标记完成
     remaining_pending = sum(

@@ -110,7 +110,7 @@ async def review_claims_async(
         try:
             reviews, _conflict_pairs = await _detect_contradictions_async(reviews, agent_reviews, provider)
         except Exception:
-            pass
+            logger.warning("Contradiction detection failed, skipping", exc_info=True)
 
     _compute_consensus_levels(reviews, agent_reviews)
     return reviews

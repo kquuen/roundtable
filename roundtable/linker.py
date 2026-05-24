@@ -15,11 +15,14 @@ maps all evidence_text strings to their most likely chunk_ids in one shot.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Optional
 
 from roundtable.models import TranscriptChunk
 from roundtable.providers import ProviderAdapter
+
+logger = logging.getLogger("roundtable.linker")
 
 
 class EvidenceLinker:
@@ -54,7 +57,7 @@ class EvidenceLinker:
             try:
                 return await self._link_with_llm(evidence_texts, chunks)
             except Exception:
-                pass  # Fall through to keyword fallback
+                logger.warning("LLM evidence linking failed, falling back to keywords", exc_info=True)
 
         return self._link_with_keywords(evidence_texts, chunks)
 

@@ -88,6 +88,14 @@ class SessionStore:
         if evidence:
             self._evidence[session_id] = evidence
 
+        # Restore reviews
+        ar_data = data.get("agent_reviews", [])
+        sr_data = data.get("supervisor_reviews", [])
+        if ar_data:
+            self._agent_reviews[session_id] = ar_data
+        if sr_data:
+            self._supervisor_reviews[session_id] = sr_data
+
     def _save_one(self, session_id: str) -> None:
         """Persist a single session to disk."""
         session = self._sessions.get(session_id)
@@ -106,6 +114,8 @@ class SessionStore:
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
             "evidence": self._evidence.get(session_id, []),
+            "agent_reviews": self._agent_reviews.get(session_id, []),
+            "supervisor_reviews": self._supervisor_reviews.get(session_id, []),
         }
 
         path = self._session_path(session_id)

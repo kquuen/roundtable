@@ -98,7 +98,7 @@ def classify_session(
         except RuntimeError:
             logger.warning("分类跳过：在事件循环中调用了同步 classify_session")
         except Exception:
-            pass  # Fall through to keyword fallback
+            logger.warning("LLM session classification failed, falling back to keywords", exc_info=True)
 
     return _classify_with_keywords(evidence)
 
