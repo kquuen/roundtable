@@ -257,6 +257,7 @@ async def run_roundtable(req: RunRoundtableRequest):
     return {
         "session_id": result.session_id,
         "mode": result.mode,
+        "domain": result.domain_name,
         "report_path": result.report_path,
         "memories_written": result.memories_written,
         "pending_confirmation_count": result.pending_confirmation_count,

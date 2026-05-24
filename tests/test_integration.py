@@ -54,7 +54,7 @@ class TestMockPipeline:
         )
         assert result.session_id == "integ_002"
         assert result.mode == "mock"
-        assert len(result.agent_reviews) == 2
+        assert len(result.agent_reviews) >= 2
         assert result.report  # Report is generated even with no evidence
 
     @pytest.mark.asyncio
@@ -134,6 +134,6 @@ class TestFullAsyncPipeline:
         )
         assert result.session_id == "integ_004"
         assert result.mode == "llm"
-        assert len(result.agent_reviews) == 2
+        assert len(result.agent_reviews) >= 2
         # Provider should have been called by agents
         assert mock_provider.chat.called

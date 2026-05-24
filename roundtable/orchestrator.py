@@ -17,9 +17,27 @@ DEFAULT_AGENT_TIMEOUT = 30
 logger = logging.getLogger("roundtable.orchestrator")
 
 
-def create_agents(agent_count: int = 5, provider: ProviderAdapter | None = None):
-    """Create agents from the registry, selecting up to agent_count."""
+def create_agents(
+    agent_count: int = 5,
+    provider: ProviderAdapter | None = None,
+    domain_name: str | None = None,
+):
+    """Create agents from the registry, selecting up to agent_count.
+
+    When domain_name is provided, reads the agent list from DomainRegistry.
+    Falls back to agent_count selection otherwise.
+    """
     registry = get_registry()
+
+    if domain_name:
+        from roundtable.domain import DomainRegistry
+        domain = DomainRegistry.get(domain_name)
+        if domain and domain.agents:
+            selected_ids = [sid for sid in domain.agents if sid in registry.list_all()]
+            if not selected_ids:
+                selected_ids = registry.list_all()[:min(domain.agent_count, len(registry.list_all()))]
+            return [registry.create(sid, provider=provider) for sid in selected_ids]
+
     all_ids = registry.list_all()
     selected_ids = all_ids[:min(agent_count, len(all_ids))]
     return [registry.create(sid, provider=provider) for sid in selected_ids]
@@ -34,6 +52,7 @@ def run_orchestrator(
     agent_count: int = 5,
     provider: ProviderAdapter | None = None,
     timeout: float = DEFAULT_AGENT_TIMEOUT,
+    domain_name: str | None = None,
 ) -> list[AgentReview]:
     """Synchronous wrapper — dispatches agents and collects reviews.
 
@@ -42,12 +61,12 @@ def run_orchestrator(
     """
     if provider is not None:
         return run_async_safely(
-            run_orchestrator_async(evidence, agent_count, provider, timeout),
+            run_orchestrator_async(evidence, agent_count, provider, timeout, domain_name),
             name="run_orchestrator — use run_orchestrator_async() instead",
         )
 
     # Mock path: synchronous keyword-based agents
-    selected = _create_agents(agent_count=agent_count)
+    selected = _create_agents(agent_count=agent_count, domain_name=domain_name)
     reviews: list[AgentReview] = []
     for agent in selected:
         review = agent.analyze(evidence)
@@ -59,6 +78,7 @@ async def run_orchestrator_async(
     evidence: EvidencePacket,
     agent_count: int = 5,
     provider: ProviderAdapter | None = None,
+    domain_name: str | None = None,
     timeout: float = DEFAULT_AGENT_TIMEOUT,
 ) -> list[AgentReview]:
     """Async concurrent dispatch — all agents run in parallel via asyncio.gather().
@@ -75,8 +95,8 @@ async def run_orchestrator_async(
     Returns:
         List of AgentReview from each agent
     """
-    selected = _create_agents(agent_count=agent_count, provider=provider)
-    logger.info("Dispatching %d agents concurrently (timeout=%ds)", len(selected), timeout)
+    selected = _create_agents(agent_count=agent_count, provider=provider, domain_name=domain_name)
+    logger.info("Dispatching %d agents concurrently (timeout=%ds, domain=%s)", len(selected), timeout, domain_name or "default")
 
     async def _run_one(agent) -> AgentReview:
         try:

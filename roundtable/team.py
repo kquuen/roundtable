@@ -205,12 +205,30 @@ def _classify_with_keywords(evidence: EvidencePacket) -> str:
     return best if scores[best] > 0 else "探索"
 
 
-def recommend_teams(session_type: str, top_n: int = 3) -> list[TeamTemplate]:
-    """Recommend team templates based on session classification.
+def recommend_teams(session_type: str = "", top_n: int = 3, domain_name: str | None = None) -> list[TeamTemplate]:
+    """Recommend team templates based on session classification or domain.
+
+    When domain_name is provided, reads agent list from DomainRegistry.
+    Falls back to session_type string mapping (backward compatible).
 
     Returns:
         Top-N matching team templates
     """
+    # New path: domain-driven
+    if domain_name:
+        from roundtable.domain import DomainRegistry
+        domain = DomainRegistry.get(domain_name)
+        if domain:
+            return [TeamTemplate(
+                team_id=domain.name,
+                name=domain.display,
+                description=domain.description,
+                suitable_scenarios=[domain.name],
+                recommended_agents=domain.agents,
+                capability_scores={},
+            )]
+
+    # Old path: string mapping (backward compatible)
     type_to_team = {
         "技术": ["tech_review", "broad_opportunity", "product_deep_dive"],
         "产品": ["product_deep_dive", "broad_opportunity", "tech_review"],

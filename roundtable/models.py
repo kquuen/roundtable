@@ -137,6 +137,23 @@ class DebateSession(BaseModel):
     )
 
 
+# ── Domain Configuration ──
+
+class DomainConfig(BaseModel):
+    """领域配置：场景 → agent 组合 + prompt 差异。"""
+    name: str = Field(description="e.g. personal_roundtable")
+    display: str = Field(description="e.g. 个人圆桌")
+    description: str = ""
+    keywords: List[str] = Field(default_factory=list, description="匹配关键词")
+    agents: List[str] = Field(default_factory=list, description="agent skill_id 列表")
+    agent_count: int = Field(default=5)
+    prompt_modifier: str = Field(default="", description="注入 system prompt 的领域提示")
+    forbidden_overrides: dict = Field(
+        default_factory=dict,
+        description="agent_id → [额外限制规则]",
+    )
+
+
 class EvidencePacket(BaseModel):
     session_id: str
     mode: str = "meeting"
@@ -232,6 +249,7 @@ class PipelineResult(BaseModel):
     """Unified result from a roundtable pipeline run."""
     session_id: str
     mode: str = "mock"
+    domain_name: str = Field(default="", description="Classified domain")
     agent_reviews: list = Field(default_factory=list)
     supervisor_reviews: list = Field(default_factory=list)
     report: str = ""

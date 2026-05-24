@@ -142,6 +142,7 @@ class RoundtableService:
         agent_count: int = 5,
         lang: str = "zh",
         max_tokens: int = 80000,
+        domain_name: str | None = None,
     ) -> PipelineResult:
         """Run the complete roundtable pipeline.
 
@@ -153,6 +154,7 @@ class RoundtableService:
             agent_count: 1-5 agents to dispatch
             lang: "zh" for Chinese, "en" for English report
             max_tokens: Token budget limit (default 80K)
+            domain_name: Override domain classification (auto-detected if None)
 
         Returns:
             PipelineResult with report, reviews, and metadata
@@ -160,9 +162,17 @@ class RoundtableService:
         budget = TokenBudget(max_tokens=max_tokens)
 
         # 1. Evidence
-        logger.info("[%s] Pipeline start: mode=%s, agents=%d, budget=%d", session_id, mode, agent_count, max_tokens)
+        logger.info("[%s] Pipeline start: mode=%s, agents=%d, budget=%d",
+                     session_id, mode, agent_count, max_tokens)
         evidence = build_evidence_packet(session_id, mode, segments)
         logger.info("[%s] Evidence built: %d chunks", session_id, len(evidence.transcript_chunks))
+
+        # 0. Domain classification (after evidence is built)
+        from roundtable.domain import classify_domain
+        if domain_name is None:
+            domain = await classify_domain(evidence, provider=self.provider)
+            domain_name = domain.name
+        logger.info("[%s] Domain classified: %s", session_id, domain_name)
 
         # 2. Agent analysis (async with provider, sync without)
         if self.provider is not None:
@@ -170,9 +180,10 @@ class RoundtableService:
                 evidence,
                 agent_count=agent_count,
                 provider=self.provider,
+                domain_name=domain_name,
             )
         else:
-            agent_reviews = run_orchestrator(evidence, agent_count=agent_count)
+            agent_reviews = run_orchestrator(evidence, agent_count=agent_count, domain_name=domain_name)
         logger.info("[%s] Agent analysis complete: %d reviews", session_id, len(agent_reviews))
 
         # Budget: estimate agent analysis cost
@@ -223,6 +234,7 @@ class RoundtableService:
         return PipelineResult(
             session_id=session_id,
             mode="llm" if self.provider else "mock",
+            domain_name=domain_name,
             agent_reviews=[ar.model_dump() for ar in agent_reviews],
             supervisor_reviews=[sr.model_dump() for sr in supervisor_reviews],
             report=report,

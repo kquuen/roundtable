@@ -1,0 +1,106 @@
+# Domain definitions — hot-reloadable without code changes
+# Each domain maps a session scenario to a specific agent combination + prompt modifier
+
+domains:
+  - name: personal_roundtable
+    display: "个人圆桌"
+    description: "单人思考/头脑风暴，需要多角度审视"
+    keywords:
+      - 个人
+      - 思考
+      - 想法
+      - 头脑风暴
+      - 反思
+      - 灵感
+      - 日记
+      - 随笔
+      - 我
+    agents:
+      - product_manager
+      - architect
+      - business_analyst
+    agent_count: 3
+    prompt_modifier: "用户在进行个人思考。请以启发式提问为主，避免断言型结论。边界规则宽松。"
+    forbidden_overrides: {}
+
+  - name: team_meeting
+    display: "团队会议"
+    description: "多人协作讨论、项目同步、决策会议"
+    keywords:
+      - 会议
+      - 团队
+      - 项目
+      - 进度
+      - 上线
+      - 发布
+      - 迭代
+      - sprint
+      - 需求
+      - 评审
+      - review
+      - 排期
+      - 协作
+    agents:
+      - product_manager
+      - architect
+      - project_manager
+      - business_analyst
+      - quality_assurance
+    agent_count: 5
+    prompt_modifier: "多人协作场景。请严格遵循各角色边界，不要越界。注意识别不同与会者的冲突观点。"
+    forbidden_overrides: {}
+
+  - name: tech_review
+    display: "技术评审"
+    description: "架构设计评审、代码审查、技术选型"
+    keywords:
+      - 架构
+      - 技术选型
+      - 代码
+      - 性能
+      - 数据库
+      - API
+      - 微服务
+      - 并发
+      - 安全
+      - 协议
+      - 重构
+      - 部署
+      - 基础设施
+      - 后端
+      - 前端架构
+    agents:
+      - architect
+      - quality_assurance
+      - security_reviewer
+    agent_count: 3
+    prompt_modifier: "技术评审场景。架构师主导，QA 关注边界条件，安全审查关注漏洞。技术纵深优先。"
+    forbidden_overrides:
+      product_manager: ["对产品策略做判断"]
+
+  - name: product_brainstorm
+    display: "产品头脑风暴"
+    description: "产品方向讨论、用户需求分析、功能规划"
+    keywords:
+      - 产品
+      - 用户
+      - 体验
+      - 功能
+      - 需求
+      - 竞品
+      - 市场
+      - MVP
+      - 原型
+      - 设计
+      - 流程
+      - 场景
+      - 用户画像
+      - 价值
+    agents:
+      - product_manager
+      - business_analyst
+      - architect
+    agent_count: 3
+    prompt_modifier: "产品探索场景。产品经理主导，商业分析关注市场匹配，架构师仅评估可行性不替代产品判断。"
+    forbidden_overrides:
+      architect: ["对产品策略做判断", "把建议写成事实"]
