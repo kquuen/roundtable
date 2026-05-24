@@ -243,6 +243,25 @@ class RoundtableRun(BaseModel):
     created_at: Optional[datetime] = None
 
 
+# ── ASR ──
+
+class ASRSegment(BaseModel):
+    """单个转写片段。"""
+    speaker: str = Field(default="Speaker")
+    text: str
+    start: float = Field(default=0.0, description="起始时间（秒）")
+    end: float = Field(default=0.0, description="结束时间（秒）")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class ASRResult(BaseModel):
+    """语音转写结果。"""
+    segments: List[ASRSegment] = Field(default_factory=list)
+    language: str = Field(default="zh")
+    duration: float = Field(default=0.0, description="音频总时长（秒）")
+    model_used: str = Field(default="whisper-1")
+
+
 # ── Pipeline Result ──
 
 class PipelineResult(BaseModel):

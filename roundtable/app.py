@@ -16,7 +16,7 @@ from typing import Optional
 
 import json as _json
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -210,6 +210,75 @@ async def upload_evidence(req: UploadEvidenceRequest):
         "chunk_count": len(evidence.transcript_chunks),
         "status": "evidence stored — ready for /roundtable/run",
     }
+
+
+@app.post("/speak")
+async def speak(audio: UploadFile = File(...)):
+    """Upload an audio file → transcribe via Whisper → create session + evidence.
+
+    Accepts: mp3, wav, m4a, ogg, webm
+    Returns: session_id + transcript segments
+
+    Requires: OPENAI_API_KEY (for Whisper API)
+    """
+    import tempfile
+    from roundtable.asr import WhisperAdapter
+    from roundtable.store import SessionStore
+
+    # Save uploaded file to temp
+    suffix = Path(audio.filename or "audio.mp3").suffix or ".mp3"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await audio.read()
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        # Transcribe
+        adapter = WhisperAdapter(backend="whisper_api")
+        try:
+            result = await adapter.transcribe_async(tmp_path)
+        except Exception as e:
+            logger.warning("Whisper transcription failed: %s", e)
+            return {
+                "error": "transcription_failed",
+                "detail": str(e)[:300],
+                "filename": audio.filename,
+            }
+
+        # Create session
+        title = audio.filename or "语音输入"
+        session = _store.create_session(
+            title=title,
+            mode="personal_roundtable",
+        )
+        sid = session.session_id
+
+        # Upload segments as evidence
+        segments = [
+            {"speaker": seg.speaker, "text": seg.text}
+            for seg in result.segments
+        ]
+        if segments:
+            _store.store_evidence(sid, segments)
+            _store.update_status(sid, SessionStatus.TRANSCRIBING)
+
+        return {
+            "session_id": sid,
+            "filename": audio.filename,
+            "language": result.language,
+            "duration": round(result.duration, 1),
+            "model": result.model_used,
+            "segment_count": len(result.segments),
+            "segments": segments,
+            "status": "transcribed — ready for /roundtable/run",
+        }
+
+    finally:
+        # Clean up temp file
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
 
 
 @app.post("/roundtable/run")
