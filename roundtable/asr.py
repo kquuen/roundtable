@@ -96,23 +96,31 @@ class WhisperAdapter:
         chunks = self._split_audio(audio_path, duration)
         logger.info("Split into %d chunks", len(chunks))
 
-        all_segments: list[ASRSegment] = []
-        detected_lang = self.language
-        time_offset = 0.0
+        try:
+            all_segments: list[ASRSegment] = []
+            detected_lang = self.language
+            time_offset = 0.0
 
-        for i, chunk_path in enumerate(chunks):
-            logger.info("Transcribing chunk %d/%d", i + 1, len(chunks))
-            segs, lang = await self._transcribe_chunk(chunk_path)
+            for i, chunk_path in enumerate(chunks):
+                logger.info("Transcribing chunk %d/%d", i + 1, len(chunks))
+                segs, lang = await self._transcribe_chunk(chunk_path)
 
-            # Offset segment timestamps
-            for seg in segs:
-                seg.start += time_offset
-                seg.end += time_offset
-                all_segments.append(seg)
+                # Offset segment timestamps
+                for seg in segs:
+                    seg.start += time_offset
+                    seg.end += time_offset
+                    all_segments.append(seg)
 
-            if lang:
-                detected_lang = lang
-            time_offset += MAX_CHUNK_SECONDS
+                if lang:
+                    detected_lang = lang
+                time_offset += MAX_CHUNK_SECONDS
+        finally:
+            # Clean up temporary chunk files
+            for p in chunks:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
 
         return ASRResult(
             segments=all_segments,

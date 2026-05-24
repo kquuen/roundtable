@@ -268,7 +268,10 @@ class RoundtableService:
 
         logger.info("[%s] Search-verify: %d pending claims", session_id, len(pending))
 
-        adapter = SearchAdapter(backend="mock")
+        # Select backend: SerpAPI if key is set, otherwise mock
+        import os
+        search_backend = "serpapi" if os.getenv("SERPAPI_API_KEY") else "mock"
+        adapter = SearchAdapter(backend=search_backend)
         search_results = {}
 
         for sr in pending[:3]:

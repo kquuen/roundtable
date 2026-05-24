@@ -151,11 +151,14 @@ def _verify_with_keywords(
     # Character-level matching for Chinese (no spaces between words)
     is_chinese = any('\u4e00' <= c <= '\u9fff' for c in claim_lower)
     if is_chinese:
-        claim_chars = set(claim_lower)
-        snippet_chars = set(all_snippets)
+        # Chinese stopwords — filter out common noise characters
+        cn_stopwords = set("的了是在不和有着这也人们可以及自己上中下到说为能去而把被让对从所")
+        claim_chars = set(claim_lower) - cn_stopwords
+        snippet_chars = set(all_snippets) - cn_stopwords
         overlap = claim_chars & snippet_chars
-        # Need at least 10% char overlap
-        ratio = len(overlap) / max(len(claim_chars), 1)
+        # Need at least 30% meaningful char overlap (excl. stopwords)
+        meaningful_count = max(len(claim_chars), 1)
+        ratio = len(overlap) / meaningful_count
         if ratio >= 0.3:
             return VerificationStatus.SUPPORTED_BY_SEARCH, f"字符匹配率: {ratio:.0%}"
         elif ratio >= 0.1:

@@ -7,6 +7,7 @@ Sessions survive server restarts.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Optional
 
 from roundtable.models import Session, SessionStatus, SessionMode, AgentReview, SupervisorReview
+
+logger = logging.getLogger("roundtable.store")
 
 
 def _validate_session_id(session_id: str) -> str:
@@ -61,7 +64,8 @@ class SessionStore:
             try:
                 self._load_one(sid)
             except Exception:
-                continue  # Skip corrupted files
+                logger.warning("Skipping corrupted session file: %s", sid, exc_info=True)
+                continue
 
     def _load_one(self, session_id: str) -> None:
         """Load a single session file."""

@@ -76,6 +76,7 @@ def _init_provider() -> ProviderAdapter | None:
     try:
         return get_provider(provider="deepseek", api_key=api_key)
     except Exception:
+        logger.warning("Provider init failed — running in mock mode", exc_info=True)
         return None
 
 
@@ -225,10 +226,29 @@ async def speak(audio: UploadFile = File(...)):
     from roundtable.asr import WhisperAdapter
     from roundtable.store import SessionStore
 
+    # Validate file type
+    ALLOWED_MIMES = {
+        "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
+        "audio/mp4", "audio/m4a", "audio/ogg", "audio/webm",
+    }
+    mime = getattr(audio, "content_type", "") or ""
+    # Accept generic audio/* if specific mime not provided
+    if mime and not mime.startswith("audio/") and mime not in ALLOWED_MIMES:
+        raise HTTPException(400, f"Unsupported audio type: {mime}")
+
+    # Validate size (25 MB max)
+    MAX_AUDIO_BYTES = 25 * 1024 * 1024
+    content = await audio.read()
+    if len(content) > MAX_AUDIO_BYTES:
+        raise HTTPException(
+            400,
+            f"Audio file too large: {len(content) / 1024 / 1024:.1f} MB "
+            f"(max {MAX_AUDIO_BYTES / 1024 / 1024:.0f} MB)",
+        )
+
     # Save uploaded file to temp
     suffix = Path(audio.filename or "audio.mp3").suffix or ".mp3"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        content = await audio.read()
         tmp.write(content)
         tmp_path = Path(tmp.name)
 
