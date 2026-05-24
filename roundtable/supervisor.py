@@ -14,6 +14,7 @@ from typing import Optional
 from roundtable.models import (
     AgentReview, ClaimType, EvidenceClaim, EvidencePacket,
     SupervisorReview, ReviewResult, BoundaryClass,
+    ClaimLifecycle, ConsensusLevel,
 )
 from roundtable.utils import run_async_safely
 
@@ -43,6 +44,9 @@ def review_claims(
 
     for ar in agent_reviews:
         for claim in ar.claims:
+            # Lifecycle: claim enters review
+            if claim.lifecycle == ClaimLifecycle.DRAFT:
+                claim.lifecycle = ClaimLifecycle.UNDER_REVIEW
             # Step 1: Evidence-based review
             r = _review_single_claim(claim, valid_chunk_ids, mode)
 
@@ -71,6 +75,7 @@ def review_claims(
         except Exception:
             logger.warning("矛盾检测异常，已跳过：", exc_info=True)
 
+    _compute_consensus_levels(reviews, agent_reviews)
     return reviews
 
 
@@ -87,6 +92,9 @@ async def review_claims_async(
 
     for ar in agent_reviews:
         for claim in ar.claims:
+            # Lifecycle: claim enters review
+            if claim.lifecycle == ClaimLifecycle.DRAFT:
+                claim.lifecycle = ClaimLifecycle.UNDER_REVIEW
             r = _review_single_claim(claim, valid_chunk_ids, mode)
             if r.review_result == ReviewResult.APPROVED and agent_forbidden:
                 forbidden = agent_forbidden.get(ar.agent_id, [])
@@ -104,7 +112,61 @@ async def review_claims_async(
         except Exception:
             pass
 
+    _compute_consensus_levels(reviews, agent_reviews)
     return reviews
+
+
+# ── Consensus level computation ──
+
+def _compute_consensus_levels(
+    reviews: list[SupervisorReview],
+    agent_reviews: list[AgentReview],
+) -> None:
+    """根据多个 Agent 是否独立提出相似观点，计算每个 claim 的共识等级。
+
+    按 claim.content 前 50 字符聚类，统计独立 Agent 数量。
+    直接在 agent_reviews 的 claim 上设置 consensus_level。
+    """
+    # 构建 claim_id → claim 的查找表
+    claim_map: dict[str, EvidenceClaim] = {}
+    for ar in agent_reviews:
+        for claim in ar.claims:
+            claim_map[claim.claim_id] = claim
+
+    # 按 content 前 50 字符聚类
+    from collections import defaultdict
+    content_groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for ar in agent_reviews:
+        for claim in ar.claims:
+            key = claim.content[:50].strip()
+            content_groups[key].append((claim.claim_id, ar.agent_id))
+
+    # 对每个 review 对应的 claim 设置共识等级
+    for r in reviews:
+        claim = claim_map.get(r.claim_id)
+        if claim is None:
+            continue
+
+        key = claim.content[:50].strip()
+        agents_in_group = set()
+        for cid, aid in content_groups.get(key, []):
+            agents_in_group.add(aid)
+
+        unique_agent_count = len(agents_in_group)
+
+        if r.review_result == ReviewResult.REJECTED:
+            claim.consensus_level = ConsensusLevel.CONTRADICTED
+        elif unique_agent_count >= 3:
+            claim.consensus_level = ConsensusLevel.STRONG
+        elif unique_agent_count >= 2:
+            claim.consensus_level = ConsensusLevel.MAJORITY
+        else:
+            claim.consensus_level = ConsensusLevel.ISOLATED
+
+    logger.debug(
+        "Consensus computed: %d claims classified",
+        sum(1 for r in reviews if claim_map.get(r.claim_id)),
+    )
 
 
 # ── Single claim review ──
@@ -392,11 +454,23 @@ async def _detect_contradictions_async(
                     r = reviews[idx]
                     # Only mark if currently approved
                     if r.review_result == ReviewResult.APPROVED:
+                        # Update claim lifecycle
+                        for ar in agent_reviews:
+                            for claim in ar.claims:
+                                if claim.claim_id == r.claim_id:
+                                    claim.lifecycle = ClaimLifecycle.CHALLENGED
+                                    break
                         reviews[idx] = SupervisorReview(
                             claim_id=r.claim_id,
                             review_result=ReviewResult.NEEDS_USER_CONFIRMATION,
                             reason=f"跨 Agent 矛盾检测：{reason}（与 {claim_b if cid == claim_a else claim_a} 冲突）",
                         )
+                        # Set NEEDS_USER after NEEDS_USER_CONFIRMATION
+                        for ar in agent_reviews:
+                            for claim in ar.claims:
+                                if claim.claim_id == r.claim_id:
+                                    claim.lifecycle = ClaimLifecycle.NEEDS_USER
+                                    break
 
     except Exception as e:
         logger.warning("Contradiction detection failed: %s", e)

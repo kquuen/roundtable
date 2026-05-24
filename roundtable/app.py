@@ -265,6 +265,44 @@ async def run_roundtable(req: RunRoundtableRequest):
     }
 
 
+@app.post("/roundtable/debate")
+async def run_debate(req: RunRoundtableRequest):
+    """Execute a two-round debate analysis (Phase 6).
+
+    Uses the same evidence as /roundtable/run but routes through
+    the DebateEngine for Round 1 (independent) + Round 2 (peer review).
+    """
+    session = _store.get(req.session_id)
+    if not session:
+        raise HTTPException(404, "Session not found — create a session first")
+
+    segments = _store.get_evidence(req.session_id)
+    if not segments:
+        import json
+        data_path = Path(__file__).resolve().parent.parent / "data" / "sample_transcript.json"
+        if data_path.exists():
+            segments = json.loads(data_path.read_text(encoding="utf-8")).get("segments", [])
+        else:
+            segments = [{"speaker": "Demo", "text": "Test segment — no evidence uploaded."}]
+
+    _store.update_status(req.session_id, SessionStatus.ANALYZING)
+
+    provider = None if req.use_mock else _provider
+    svc = _get_service(provider)
+
+    result = await svc.run_debate_pipeline(
+        session_id=req.session_id,
+        segments=segments,
+        mode=session.mode,
+        title=session.title,
+        agent_count=req.agent_count,
+        lang=req.lang,
+    )
+
+    _store.update_status(req.session_id, SessionStatus.COMPLETED)
+    return result
+
+
 @app.post("/team/recommend")
 async def recommend_team(req: UploadEvidenceRequest):
     """Recommend expert teams based on session content."""

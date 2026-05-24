@@ -225,6 +225,77 @@ def parse_agent_response(
     return result, None
 
 
+def build_debate_prompt(
+    skill: SkillManifest,
+    evidence: EvidencePacket,
+    peer_reviews: list,
+) -> tuple[str, str]:
+    """构建辩论 Round 2 的 system + user prompt。
+
+    Round 2 的核心差异：Agent 看到其他专家的 Round 1 结论，
+    需要产出质疑（disagree）、同意（agree）、或延伸（extend）。
+    """
+    from roundtable.models import AgentReview as AR
+
+    # System prompt
+    system = f"""你是{skill.name}（{skill.role}），正在参加一场专家辩论。
+
+这是一场结构化的两轮辩论。第一轮各专家已独立发表观点，现在是第二轮：你需要审视其他专家的结论。
+
+**你的职责：**
+1. 仔细阅读其他专家的观点
+2. 对于你**同意的观点**：说明为什么同意，补充你的论据
+3. 对于你**不同意的观点**：明确指出矛盾，给出理由和证据
+4. 对于你**想延伸的观点**：在原观点基础上扩展
+
+**领域边界：**
+- 你可以讨论：{', '.join(skill.allowed_domains) if skill.allowed_domains else '所有领域'}
+- 你不应越界：{'、'.join(skill.forbidden) if skill.forbidden else '无特别限制'}
+- 你可以产出的声明类型：{', '.join(skill.allowed_claim_types) if skill.allowed_claim_types else 'inference, recommendation'}
+
+**输出格式（JSON）：**
+{{
+  "summary": "一句话总结你对本轮辩论的立场",
+  "claims": [
+    {{
+      "content": "你的论点内容",
+      "claim_type": "inference | fact | recommendation",
+      "confidence": 0.0-1.0,
+      "position": "agree | disagree | extend",
+      "target_claim_id": "被回应的 claim_id（可选）",
+      "evidence_text": "引用原文的关键语句"
+    }}
+  ],
+  "open_questions": [],
+  "recommended_next_actions": []
+}}
+"""
+
+    # User message: transcript + peer reviews
+    chunks_text = "\n".join(
+        f"[{c.speaker}] {c.text}" for c in evidence.transcript_chunks
+    )
+
+    peer_texts = []
+    for pr in peer_reviews:
+        if isinstance(pr, AR):
+            peer_texts.append(f"\n### {pr.agent_id} 的首轮观点\n{pr.summary}")
+            for c in pr.claims:
+                peer_texts.append(f"- [{c.claim_id}] ({c.claim_type.value if hasattr(c.claim_type, 'value') else c.claim_type}) {c.content}")
+        else:
+            peer_texts.append(str(pr))
+
+    user = f"""=== 会议原文 ===
+{chunks_text}
+
+=== 其他专家的首轮观点 ===
+{''.join(peer_texts)}
+
+请输出你的第二轮辩论观点（JSON 格式）："""
+
+    return system, user
+
+
 def get_provider(
     provider: str = "deepseek",
     api_key: str | None = None,

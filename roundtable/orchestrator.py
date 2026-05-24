@@ -17,12 +17,16 @@ DEFAULT_AGENT_TIMEOUT = 30
 logger = logging.getLogger("roundtable.orchestrator")
 
 
-def _create_agents(agent_count: int = 5, provider: ProviderAdapter | None = None):
+def create_agents(agent_count: int = 5, provider: ProviderAdapter | None = None):
     """Create agents from the registry, selecting up to agent_count."""
     registry = get_registry()
     all_ids = registry.list_all()
     selected_ids = all_ids[:min(agent_count, len(all_ids))]
     return [registry.create(sid, provider=provider) for sid in selected_ids]
+
+
+# Alias for backward compatibility
+_create_agents = create_agents
 
 
 def run_orchestrator(

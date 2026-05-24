@@ -94,6 +94,46 @@ class EvidenceClaim(BaseModel):
     status: str = Field(default="pending_review")
     lifecycle: ClaimLifecycle = Field(default=ClaimLifecycle.DRAFT)
     consensus_level: ConsensusLevel = Field(default=ConsensusLevel.UNKNOWN)
+    debate_history: List[str] = Field(
+        default_factory=list,
+        description="辩论中引用此 claim 的 argument_id 列表",
+    )
+
+
+# ── Debate ──
+
+class DebateArgument(BaseModel):
+    """一轮辩论中的单个论点。"""
+    argument_id: str = Field(description="e.g. arg_r2_001")
+    agent_id: str
+    round: int = Field(ge=1, le=2, description="1=首轮观点, 2=质疑/同意/修正")
+    position: str = Field(description="agree | disagree | extend")
+    target_claim_id: Optional[str] = Field(
+        default=None,
+        description="Round 2 时指向 Round 1 的 claim_id",
+    )
+    content: str
+    evidence_ids: List[str] = Field(default_factory=list)
+
+
+class DebateRound(BaseModel):
+    """一轮完整的辩论。"""
+    round_number: int
+    arguments: List[DebateArgument] = Field(default_factory=list)
+
+
+class DebateSession(BaseModel):
+    """一次辩论的完整记录。"""
+    session_id: str
+    rounds: List[DebateRound] = Field(default_factory=list)
+    consensus_summary: dict = Field(
+        default_factory=dict,
+        description="claim_id → consensus_level",
+    )
+    conflicts: List[dict] = Field(
+        default_factory=list,
+        description="未解决的矛盾列表",
+    )
 
 
 class EvidencePacket(BaseModel):

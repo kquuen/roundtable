@@ -23,6 +23,44 @@ from roundtable.utils import run_async_safely
 logger = logging.getLogger("roundtable.services")
 
 
+# ── Token Budget ──
+
+class BudgetExceeded(Exception):
+    """Token 预算超限异常。"""
+
+    def __init__(self, used: int, limit: int, stage: str):
+        self.used = used
+        self.limit = limit
+        self.stage = stage
+        super().__init__(f"Token budget exceeded at {stage}: {used}/{limit}")
+
+
+class TokenBudget:
+    """Token 用量追踪器。每次 LLM 调用后累加，超限抛 BudgetExceeded。"""
+
+    def __init__(self, max_tokens: int = 80000):
+        self.max_tokens = max_tokens
+        self.used = 0
+        self.calls = 0
+
+    def estimate(self, input_chars: int, output_chars: int) -> int:
+        """估算一次调用的 token 用量（简化为 chars/2）。"""
+        return (input_chars + output_chars) // 2 + 10
+
+    def consume(self, tokens: int, stage: str = "unknown") -> None:
+        """消耗 tokens，超限抛异常。"""
+        self.used += tokens
+        self.calls += 1
+        if self.used > self.max_tokens:
+            raise BudgetExceeded(self.used, self.max_tokens, stage)
+
+    def remaining(self) -> int:
+        return max(0, self.max_tokens - self.used)
+
+    def summary(self) -> str:
+        return f"Tokens: {self.used}/{self.max_tokens} ({self.calls} calls, {self.remaining()} remaining)"
+
+
 class RoundtableService:
     """Unified pipeline orchestrator shared by CLI and API.
 
@@ -48,6 +86,70 @@ class RoundtableService:
         self.report_store = report_store
         self.memory_store = memory_store
 
+    async def run_debate_pipeline(
+        self,
+        session_id: str,
+        segments: list[dict],
+        mode: str = "meeting",
+        title: str = "",
+        agent_count: int = 5,
+        lang: str = "zh",
+        max_tokens: int = 80000,
+    ) -> dict:
+        """Run a two-round debate pipeline (Phase 6).
+
+        与 run_pipeline() 并行存在，走独立路径。
+        """
+        from roundtable.debate import DebateEngine
+        from roundtable.orchestrator import create_agents as _create_agents
+
+        budget = TokenBudget(max_tokens=max_tokens)
+        logger.info("[%s] Debate pipeline start: mode=%s, agents=%d", session_id, mode, agent_count)
+
+        # 1. Evidence
+        evidence = build_evidence_packet(session_id, mode, segments)
+
+        # 2. Create agents
+        agents = _create_agents(agent_count=agent_count, provider=self.provider)
+
+        # 3. Run debate
+        engine = DebateEngine(provider=self.provider, budget=budget)
+        debate_session = await engine.run_debate(evidence, agents)
+
+        # 4. Build report (basic: consensus summary + debate rounds)
+        report_lines = [f"# 辩论报告：{title or 'Untitled'}", ""]
+        report_lines.append("## 共识分层")
+        for claim_id, level in debate_session.consensus_summary.items():
+            report_lines.append(f"- [{level}] {claim_id}")
+        report_lines.append("")
+        report_lines.append(f"## 辩论记录")
+        for rnd in debate_session.rounds:
+            report_lines.append(f"### Round {rnd.round_number}: {'首轮观点' if rnd.round_number == 1 else '质疑与修正'}")
+            for arg in rnd.arguments:
+                pos = "✅" if arg.position == "agree" else "❌" if arg.position == "disagree" else "➕"
+                report_lines.append(f"- {pos} [{arg.agent_id}] {arg.content[:120]}")
+            report_lines.append("")
+        if debate_session.conflicts:
+            report_lines.append("## ⚠️ 引用完整性警告")
+            for c in debate_session.conflicts:
+                report_lines.append(f"- {c['argument_id']}: {c['error']}")
+            report_lines.append("")
+
+        report = "\n".join(report_lines)
+
+        logger.info("[%s] Debate pipeline complete: %d rounds, %s",
+                     session_id, len(debate_session.rounds), budget.summary())
+
+        return {
+            "session_id": session_id,
+            "mode": "debate",
+            "rounds": len(debate_session.rounds),
+            "arguments": sum(len(r.arguments) for r in debate_session.rounds),
+            "consensus_items": len(debate_session.consensus_summary),
+            "conflicts": len(debate_session.conflicts),
+            "report": report,
+        }
+
     async def run_pipeline(
         self,
         session_id: str,
@@ -56,6 +158,7 @@ class RoundtableService:
         title: str = "",
         agent_count: int = 5,
         lang: str = "zh",
+        max_tokens: int = 80000,
     ) -> PipelineResult:
         """Run the complete roundtable pipeline.
 
@@ -66,12 +169,15 @@ class RoundtableService:
             title: Session title (used in report header)
             agent_count: 1-5 agents to dispatch
             lang: "zh" for Chinese, "en" for English report
+            max_tokens: Token budget limit (default 80K)
 
         Returns:
             PipelineResult with report, reviews, and metadata
         """
+        budget = TokenBudget(max_tokens=max_tokens)
+
         # 1. Evidence
-        logger.info("[%s] Pipeline start: mode=%s, agents=%d", session_id, mode, agent_count)
+        logger.info("[%s] Pipeline start: mode=%s, agents=%d, budget=%d", session_id, mode, agent_count, max_tokens)
         evidence = build_evidence_packet(session_id, mode, segments)
         logger.info("[%s] Evidence built: %d chunks", session_id, len(evidence.transcript_chunks))
 
@@ -86,6 +192,12 @@ class RoundtableService:
             agent_reviews = run_orchestrator(evidence, agent_count=agent_count)
         logger.info("[%s] Agent analysis complete: %d reviews", session_id, len(agent_reviews))
 
+        # Budget: estimate agent analysis cost
+        analysis_chars = sum(
+            len(c.content) for ar in agent_reviews for c in ar.claims
+        ) + sum(len(ar.summary) for ar in agent_reviews)
+        budget.consume(budget.estimate(0, analysis_chars), "agent_analysis")
+
         # 3. Supervisor review (with forbidden rules from skill registry)
         agent_ids = list({ar.agent_id for ar in agent_reviews})
         agent_forbidden = _build_forbidden_map(agent_ids)
@@ -95,6 +207,9 @@ class RoundtableService:
             agent_forbidden=agent_forbidden,
         )
         logger.info("[%s] Supervisor review complete: %d claims reviewed", session_id, len(supervisor_reviews))
+
+        # Budget: estimate contradiction detection
+        budget.consume(budget.estimate(3000, 2000), "supervisor_review")
 
         # 4. Memory — auto-write high-confidence approved claims
         memories_written = 0
@@ -120,7 +235,7 @@ class RoundtableService:
             path = self.report_store.save(session_id, title or "Untitled", report)
             report_path = str(path)
 
-        logger.info("[%s] Pipeline complete: memories=%d, pending=%d", session_id, memories_written, pending_count)
+        logger.info("[%s] Pipeline complete: memories=%d, pending=%d, %s", session_id, memories_written, pending_count, budget.summary())
 
         return PipelineResult(
             session_id=session_id,

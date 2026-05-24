@@ -10,9 +10,11 @@ from typing import Optional
 
 from roundtable.models import (
     AgentReview, EvidenceClaim, EvidencePacket, ClaimType, SkillManifest,
+    ClaimLifecycle,
 )
 from roundtable.providers import (
-    ProviderAdapter, build_agent_prompt, parse_agent_response,
+    ProviderAdapter, build_agent_prompt, build_debate_prompt,
+    parse_agent_response,
 )
 from roundtable.skills import load_skill
 from roundtable.linker import EvidenceLinker
@@ -34,18 +36,33 @@ class Agent:
     def agent_id(self) -> str:
         return self.skill.skill_id
 
-    def analyze(self, evidence: EvidencePacket) -> AgentReview:
+    def analyze(
+        self,
+        evidence: EvidencePacket,
+        peer_reviews: list[AgentReview] | None = None,
+    ) -> AgentReview:
         """Synchronous entry point. Delegates to async or mock path."""
         if self.provider is not None:
             return run_async_safely(
-                self.analyze_async(evidence),
+                self.analyze_async(evidence, peer_reviews=peer_reviews),
                 name=f"Agent.analyze({self.agent_id}) — use analyze_async() instead",
             )
+        if peer_reviews:
+            return self._analyze_debate_mock(evidence, peer_reviews)
         return self._analyze_mock(evidence)
 
-    async def analyze_async(self, evidence: EvidencePacket) -> AgentReview:
+    async def analyze_async(
+        self,
+        evidence: EvidencePacket,
+        peer_reviews: list[AgentReview] | None = None,
+    ) -> AgentReview:
         """Async analysis using LLM provider."""
-        system_prompt, user_message = build_agent_prompt(self.skill, evidence)
+        if peer_reviews:
+            system_prompt, user_message = build_debate_prompt(
+                self.skill, evidence, peer_reviews,
+            )
+        else:
+            system_prompt, user_message = build_agent_prompt(self.skill, evidence)
 
         raw = await self.provider.chat(
             system_prompt=system_prompt,
@@ -149,6 +166,7 @@ class Agent:
                 content=c.get("content", ""),
                 evidence_ids=evidence_ids,
                 confidence=float(c.get("confidence", 0.5)),
+                lifecycle=ClaimLifecycle.DRAFT,
             )
             claims.append(claim)
 
@@ -168,6 +186,49 @@ class Agent:
         Subclasses may override this for role-specific keyword logic.
         Default: generic keyword detection.
         """
+        return self._analyze_debate_mock(evidence, [])
+
+    def _analyze_debate_mock(
+        self, evidence: EvidencePacket, peer_reviews: list,
+    ) -> AgentReview:
+        """模板化 Mock 辩论 — 不依赖 LLM，只需结构完整。
+
+        每个 Agent 看到 peer 的 claim → 按角色模板生成 agree/disagree/extend。
+        保证数据流和状态转换与真实路径一致，测试覆盖不归零。
+        """
+        claims = []
+        skill_name = self.skill.name
+
+        for pr in peer_reviews:
+            for i, claim in enumerate(pr.claims[:2]):  # 只看每个 peer 的前 2 个 claim
+                # 按角色模板生成不同立场
+                if i % 3 == 0:
+                    position = "agree"
+                    template = f"[Mock辩论] {skill_name} 同意 {pr.agent_id} 的观点：{claim.content[:60]}"
+                elif i % 3 == 1:
+                    position = "disagree"
+                    template = f"[Mock辩论] {skill_name} 对 {pr.agent_id} 的 {claim.claim_id} 持不同意见：{claim.content[:60]}"
+                else:
+                    position = "extend"
+                    template = f"[Mock辩论] {skill_name} 延伸 {pr.agent_id} 的观点：{claim.content[:60]}"
+
+                claims.append(EvidenceClaim(
+                    claim_id=f"c_{self.agent_id}_debate_{len(claims):03d}",
+                    agent_id=self.agent_id,
+                    claim_type=ClaimType.INFERENCE,
+                    content=template,
+                    evidence_ids=claim.evidence_ids[:1],
+                    confidence=0.6,
+                    lifecycle=ClaimLifecycle.DRAFT,
+                ))
+
+        return AgentReview(
+            agent_id=self.agent_id,
+            summary=f"[Mock] {skill_name} 完成辩论轮，回应了 {len(peer_reviews)} 位专家",
+            claims=claims,
+        )
+
+
         raise NotImplementedError(
             f"Agent '{self.agent_id}' has no mock analysis implementation "
             f"and no ProviderAdapter configured. "
