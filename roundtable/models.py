@@ -308,3 +308,153 @@ class TeamTemplate(BaseModel):
     suitable_scenarios: List[str] = Field(default_factory=list)
     recommended_agents: List[str] = Field(default_factory=list)
     capability_scores: dict = Field(default_factory=dict)
+
+
+# ── Anchored Debate (个人圆桌模式) ──
+
+class ClaimNature(str, Enum):
+    """Claim的主客观属性：意见 vs 事实"""
+    OPINION = "opinion"   # 视角性陈述，无需来源
+    FACT    = "fact"      # 事实性陈述，必须有来源或降级为OPINION
+
+
+class DebateMode(str, Enum):
+    QUICK = "quick"  # 只跑Round 0+1，约5秒
+    FULL  = "full"   # Round 0+1+2，约15秒（默认）
+    DEEP  = "deep"   # Round 0+1+2+3守场，约25秒
+
+
+class DecisionTemplate(str, Enum):
+    DIRECTION  = "direction"   # 该不该做这个方向
+    FEATURE    = "feature"     # 哪个功能先做
+    PRICING    = "pricing"     # 定价策略
+    PIVOT      = "pivot"       # 要不要转型
+    PARTNER    = "partner"     # 合作是否值得
+    GENERAL    = "general"     # 通用决策（默认）
+
+
+class AnchorStatement(BaseModel):
+    """Round 0：用户愿景代言人的锚点发言"""
+    session_id: str
+    agent_id: str = "user_advocate"
+    core_plan: str = Field(description="用户想做的核心事项")
+    stated_reasons: List[str] = Field(default_factory=list, description="用户明确说的理由")
+    known_resources: List[str] = Field(default_factory=list, description="用户明确提到的资源")
+    main_concern: str = Field(default="", description="用户的主要困惑或问题")
+    raw_content: str = Field(default="", description="代言人的完整发言文本")
+
+
+class SpecialistStance(str, Enum):
+    SUPPORT   = "support"    # 支持用户愿景
+    CHALLENGE = "challenge"  # 挑战用户愿景
+    MIXED     = "mixed"      # 部分支持部分挑战
+
+
+class SpecialistResponse(BaseModel):
+    """Round 1：专家对锚点的响应"""
+    argument_id: str
+    agent_id: str
+    stance: SpecialistStance
+    stance_summary: str = Field(description="一句话说明支持/挑战哪一点")
+    supporting_points: List[str] = Field(default_factory=list)
+    challenge_points: List[str] = Field(default_factory=list)
+    raw_content: str = Field(default="")
+
+
+class InformationGap(BaseModel):
+    """代言人在Round 2无法回应的挑战 → 关键缺口"""
+    gap_id: str
+    challenger_agent_id: str
+    challenge_content: str
+    gap_description: str = Field(description="用户缺失的具体信息类型")
+
+
+class QuickRequest(BaseModel):
+    """零门槛入口：一句话启动辩论"""
+    question: str = Field(description="用户的决策问题或想法描述")
+    context: Optional[str] = Field(default=None, description="可选补充背景")
+    template: DecisionTemplate = Field(default=DecisionTemplate.GENERAL)
+    mode: DebateMode = Field(default=DebateMode.FULL)
+    agents: Optional[List[str]] = Field(
+        default=None,
+        description="指定专家skill_id列表，不传则自动推荐"
+    )
+
+
+class InterviewQuestion(BaseModel):
+    question_id: str
+    question: str
+    purpose: str = Field(description="这个问题要补充什么信息")
+    is_required: bool = False
+
+
+class InterviewContext(BaseModel):
+    """追问阶段的完整上下文"""
+    session_id: str
+    original_question: str
+    template: DecisionTemplate
+    questions: List[InterviewQuestion] = Field(default_factory=list)
+    answers: dict = Field(default_factory=dict, description="question_id → 用户回答")
+    enriched_context: str = Field(default="", description="整合后发给Agent的完整上下文")
+    user_bias_signal: Optional[str] = Field(
+        default=None,
+        description="检测到的用户隐含倾向（不发给Agent，仅Supervisor使用）"
+    )
+
+
+class AnchoredReport(BaseModel):
+    """3+1格式报告：面向个人决策者"""
+    session_id: str
+    question: str
+    conclusions: List[str] = Field(
+        default_factory=list,
+        description="3条直接可用的结论，每条一句话"
+    )
+    key_dispute: str = Field(default="", description="专家们分歧最大的一个点")
+    blind_spot: str = Field(default="", description="用户没想到但影响决策的角度")
+    next_action: str = Field(default="", description="最先要去验证的一件事")
+    validated_aspects: List[str] = Field(default_factory=list, description="≥2个专家支持的方面")
+    challenged_aspects: List[str] = Field(default_factory=list, description="被专家明确反对的方面")
+    information_gaps: List[InformationGap] = Field(default_factory=list, description="用户的关键信息缺口")
+    specialist_stances: dict = Field(default_factory=dict, description="agent_id → stance")
+
+
+# ── Memory (三层记忆) ──
+
+class DecisionLog(BaseModel):
+    """Layer A：决策日志"""
+    log_id: str
+    created_at: datetime
+    question: str
+    sanitized_question: str = Field(default="", description="去偏后的中立版本")
+    agents_used: List[str] = Field(default_factory=list)
+    conclusions: List[str] = Field(default_factory=list)
+    key_dispute: str = ""
+    blind_spots: List[str] = Field(default_factory=list)
+    session_id: str
+    follow_up_id: Optional[str] = None
+
+
+class UserProfile(BaseModel):
+    """Layer B：用户画像（自动从DecisionLog提炼）"""
+    profile_id: str = "default"
+    updated_at: Optional[datetime] = None
+    decision_count: int = 0
+    decision_themes: dict = Field(default_factory=dict, description="主题 → 出现次数")
+    observed_patterns: List[str] = Field(default_factory=list, description="按时间排列的决策模式观察")
+    recurring_blind_spots: List[str] = Field(default_factory=list)
+    context_for_next_debate: str = Field(
+        default="",
+        description="注入下次辩论的用户画像摘要"
+    )
+
+
+class FollowUp(BaseModel):
+    """Layer C：复盘提醒（用户主动设置）"""
+    follow_up_id: str
+    log_id: str
+    created_at: datetime
+    reminder_date: Optional[datetime] = None  # 用户自行设置，无默认值
+    actual_outcome: Optional[str] = None
+    outcome_rating: Optional[int] = Field(default=None, ge=1, le=5)
+    was_decision_right: Optional[bool] = None

@@ -603,3 +603,204 @@ async def health_check():
         "sessions": _store.session_count(),
         "llm_enabled": _provider is not None,
     }
+
+
+# ══════════════════════════════════════════════
+# 个人圆桌模式：新增端点
+# ══════════════════════════════════════════════
+
+import asyncio
+import uuid as _uuid
+from fastapi.responses import StreamingResponse
+from roundtable.models import (
+    QuickRequest, InterviewContext, DecisionTemplate,
+    AnchoredReport, DebateMode,
+)
+from roundtable.debate import (
+    AnchoredDebateEngine, get_interview_questions, sanitize_user_bias,
+    _DEFAULT_AGENTS,
+)
+from roundtable.report import compose_anchored_report
+
+# SSE会话队列（session_id → asyncio.Queue）
+_sse_queues: dict[str, asyncio.Queue] = {}
+
+
+class InterviewStartRequest(BaseModel):
+    question: str
+    template: str = "general"
+
+
+class InterviewAnswerRequest(BaseModel):
+    session_id: str
+    answers: dict  # question_id → 答案文字
+
+
+@app.post("/roundtable/interview", response_class=Utf8JSONResponse)
+async def start_interview(req: InterviewStartRequest):
+    """
+    追问阶段：用户提交问题后，系统返回2-3个追问。
+    用户回答后再调 /roundtable/quick 发起辩论。
+    """
+    session_id = f"rt_{_uuid.uuid4().hex[:8]}"
+    try:
+        template = DecisionTemplate(req.template)
+    except ValueError:
+        template = DecisionTemplate.GENERAL
+
+    questions = get_interview_questions(template)
+    sanitized, bias = sanitize_user_bias(req.question)
+
+    return {
+        "session_id": session_id,
+        "original_question": req.question,
+        "sanitized_question": sanitized,
+        "template": template.value,
+        "questions": questions,
+        "_bias_detected": bias is not None,  # 仅供调试，不展示给用户
+    }
+
+
+@app.post("/roundtable/quick", response_class=Utf8JSONResponse)
+async def quick_roundtable(req: QuickRequest):
+    """
+    零门槛启动辩论（同步，等待完成后返回报告）。
+    前端若需要实时流，请先调此端点获得 session_id，
+    再 GET /roundtable/stream/{session_id}。
+    """
+    session_id = f"rt_{_uuid.uuid4().hex[:8]}"
+    sanitized, bias_signal = sanitize_user_bias(req.question)
+
+    # 整合追问上下文
+    interview = InterviewContext(
+        session_id=session_id,
+        original_question=req.question,
+        template=req.template,
+        questions=[],
+        answers={},
+        enriched_context=(req.context or "") + f"\n原始问题：{sanitized}",
+        user_bias_signal=bias_signal,
+    )
+
+    engine = AnchoredDebateEngine(provider=_provider)
+    report = await engine.run(interview, mode=req.mode)
+
+    # 渲染Markdown报告
+    md = compose_anchored_report(report)
+
+    return {
+        "session_id": session_id,
+        "report": md,
+        "conclusions": report.conclusions,
+        "key_dispute": report.key_dispute,
+        "blind_spot": report.blind_spot,
+        "next_action": report.next_action,
+        "specialist_stances": report.specialist_stances,
+        "information_gaps": [g.model_dump() for g in report.information_gaps],
+    }
+
+
+@app.post("/roundtable/quick/stream-start", response_class=Utf8JSONResponse)
+async def quick_roundtable_stream_start(req: QuickRequest):
+    """
+    启动流式辩论：返回 session_id，前端随即连接 SSE 端点。
+    辩论在后台异步执行，事件通过 SSE 推送。
+    """
+    session_id = f"rt_{_uuid.uuid4().hex[:8]}"
+    sanitized, bias_signal = sanitize_user_bias(req.question)
+
+    interview = InterviewContext(
+        session_id=session_id,
+        original_question=req.question,
+        template=req.template,
+        questions=[],
+        answers={},
+        enriched_context=(req.context or "") + f"\n原始问题：{sanitized}",
+        user_bias_signal=bias_signal,
+    )
+
+    # 创建事件队列
+    queue: asyncio.Queue = asyncio.Queue()
+    _sse_queues[session_id] = queue
+
+    # 后台启动辩论
+    async def run_debate():
+        try:
+            engine = AnchoredDebateEngine(provider=_provider)
+            report = await engine.run(interview, mode=req.mode, event_queue=queue)
+            md = compose_anchored_report(report)
+            await queue.put({
+                "type": "final_report",
+                "content": md,
+                "data": {
+                    "conclusions": report.conclusions,
+                    "key_dispute": report.key_dispute,
+                    "blind_spot": report.blind_spot,
+                    "next_action": report.next_action,
+                    "specialist_stances": report.specialist_stances,
+                },
+            })
+        except Exception as e:
+            await queue.put({"type": "error", "content": str(e)})
+        finally:
+            await queue.put({"type": "done"})
+
+    asyncio.create_task(run_debate())
+
+    return {"session_id": session_id, "stream_url": f"/roundtable/stream/{session_id}"}
+
+
+@app.get("/roundtable/stream/{session_id}")
+async def stream_debate_events(session_id: str):
+    """
+    SSE端点：推送辩论过程的实时事件流。
+    前端使用 EventSource 连接此端点。
+    """
+    queue = _sse_queues.get(session_id)
+    if queue is None:
+        raise HTTPException(404, f"No active debate stream for session {session_id}")
+
+    import json as _j
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=120.0)
+                except asyncio.TimeoutError:
+                    yield "data: {\"type\": \"heartbeat\"}\n\n"
+                    continue
+
+                data_str = _j.dumps(event, ensure_ascii=False)
+                yield f"data: {data_str}\n\n"
+
+                if event.get("type") in ("done", "error"):
+                    break
+        finally:
+            _sse_queues.pop(session_id, None)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+@app.get("/roundtable/templates", response_class=Utf8JSONResponse)
+async def list_templates():
+    """列出所有决策模板及其推荐Agent组合。"""
+    return {
+        "templates": [
+            {"id": "direction", "name": "方向选择", "desc": "该不该做这个方向"},
+            {"id": "feature",   "name": "功能取舍", "desc": "哪个功能先做"},
+            {"id": "pricing",   "name": "定价策略", "desc": "如何定价"},
+            {"id": "pivot",     "name": "转型决策", "desc": "要不要转型"},
+            {"id": "partner",   "name": "合作判断", "desc": "这个合作值不值得谈"},
+            {"id": "general",   "name": "通用决策", "desc": "其他类型的决策"},
+        ],
+        "default_agents": _DEFAULT_AGENTS,
+    }

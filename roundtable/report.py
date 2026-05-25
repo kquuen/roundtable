@@ -369,3 +369,73 @@ def _find_argument_content(debate_session, claim_id: str) -> str:
             if arg.target_claim_id == claim_id:
                 return arg.content
     return ""
+
+
+# ══════════════════════════════════════════════
+# 个人圆桌：3+1格式报告
+# ══════════════════════════════════════════════
+
+def compose_anchored_report(report) -> str:
+    """将 AnchoredReport 渲染为 Markdown 字符串（3+1格式）。"""
+    lines: list[str] = []
+    lines.append("# 圆桌辩论报告")
+    lines.append("")
+    lines.append(f"> **你的问题：** {report.question}")
+    lines.append("")
+
+    lines.append("## 📋 三条结论")
+    lines.append("")
+    if report.conclusions:
+        for i, c in enumerate(report.conclusions[:3], 1):
+            lines.append(f"**{i}.** {c}")
+            lines.append("")
+    else:
+        lines.append("_辩论未产生明确结论，建议补充更多背景信息后重新发起。_")
+        lines.append("")
+
+    lines.append("## ⚔️ 关键争议")
+    lines.append("")
+    lines.append(report.key_dispute or "各专家基本一致，未出现明显分歧。")
+    lines.append("")
+
+    lines.append("## 💡 你没想到的角度")
+    lines.append("")
+    lines.append(report.blind_spot or "暂无发现明显盲区。")
+    lines.append("")
+
+    lines.append("## → 最先要验证的一件事")
+    lines.append("")
+    lines.append(f"**{report.next_action}**")
+    lines.append("")
+
+    if report.specialist_stances:
+        lines.append("---")
+        lines.append("## 专家立场速览")
+        lines.append("")
+        stance_emoji = {"support": "✅", "challenge": "❌", "mixed": "🔀"}
+        agent_names = {
+            "market_positioning": "市场定位顾问",
+            "product_feasibility": "产品可行性工程师",
+            "market_adoption": "市场接受度分析师",
+            "monetization": "变现路径顾问",
+        }
+        for agent_id, stance in report.specialist_stances.items():
+            emoji = stance_emoji.get(stance, "○")
+            name = agent_names.get(agent_id, agent_id)
+            lines.append(f"- {emoji} **{name}**：{stance}")
+        lines.append("")
+
+    if report.information_gaps:
+        lines.append("---")
+        lines.append("## ❓ 关键信息缺口")
+        lines.append("")
+        for gap in report.information_gaps:
+            lines.append(f"- **{gap.challenger_agent_id} 提出**：{gap.gap_description}")
+        lines.append("")
+
+    lines.append("---")
+    lines.append(
+        "_本报告由 Roundtable 圆桌生成。"
+        "所有专家基于事实和逻辑分析，不猜测你的倾向。_"
+    )
+    return "\n".join(lines)
