@@ -65,10 +65,6 @@ _memory = MemoryStore()
 # Provider — created at startup
 _provider: Optional[ProviderAdapter] = None
 
-# Service — unified pipeline orchestrator
-_service: Optional[RoundtableService] = None
-
-
 def _init_provider() -> ProviderAdapter | None:
     """Initialize the LLM provider from environment."""
     api_key = os.getenv("DEEPSEEK_API_KEY")
@@ -82,24 +78,18 @@ def _init_provider() -> ProviderAdapter | None:
 
 
 def _get_service(provider: ProviderAdapter | None = None) -> RoundtableService:
-    """Get or create the service singleton (lazy-init for tests)."""
-    global _service
-    if _service is None:
-        _service = RoundtableService(
-            provider=provider or _provider,
-            session_store=_store,
-            report_store=_reports,
-            memory_store=_memory,
-        )
-    elif provider is not None and _service.provider is None:
-        # Update provider if it was None before (e.g., lifespan ran without API key)
-        _service.provider = provider
-    return _service
+    """Build a service instance bound to the provider for this request."""
+    return RoundtableService(
+        provider=provider,
+        session_store=_store,
+        report_store=_reports,
+        memory_store=_memory,
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _provider, _service
+    global _provider
     _provider = _init_provider()
     if _provider:
         logger.info("LLM provider initialized: deepseek")
@@ -111,8 +101,6 @@ async def lifespan(app: FastAPI):
     yaml_loaded = load_from_directory()
     if yaml_loaded:
         logger.info("Loaded %d YAML skills from skills/", yaml_loaded)
-
-    _get_service(_provider)
 
     yield
 

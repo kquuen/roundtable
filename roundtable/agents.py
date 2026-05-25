@@ -278,7 +278,7 @@ class ProductManager(Agent):
                 agent_id=self.agent_id,
                 claim_type=ClaimType.RECOMMENDATION,
                 content="根据讨论内容，建议优先聚焦 MVP 核心范围，将非关键特性推迟到后续阶段。",
-                evidence_ids=[],
+                evidence_ids=list(claims[0].evidence_ids),
                 confidence=0.78,
             ))
         return AgentReview(

@@ -13,7 +13,6 @@ Usage:
 """
 
 from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -26,6 +25,9 @@ from roundtable.services import RoundtableService
 
 def main():
     """CLI entry point with argument parsing."""
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(
         description="圆桌会议 Roundtable — AI 专家圆桌分析"
     )
@@ -55,6 +57,18 @@ def main():
         "--output", "-o",
         type=str,
         help="Output report path (default: reports/latest_report.md)",
+    )
+    parser.add_argument(
+        "--title", "-t",
+        type=str,
+        default="",
+        help="Override session title (default: transcript title)",
+    )
+    parser.add_argument(
+        "--lang",
+        choices=["zh", "en"],
+        default="zh",
+        help="Report language (default: zh)",
     )
 
     args = parser.parse_args()
@@ -102,7 +116,7 @@ def main():
         session_id="s_cli",
         segments=segments,
         mode=args.mode,
-        title=args.title,
+        title=args.title or title,
         agent_count=args.agents,
         lang=args.lang,
     )

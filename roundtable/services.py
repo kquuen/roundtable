@@ -314,7 +314,6 @@ class RoundtableService:
                 supervisor_reviews, agent_reviews, search_results, provider=self.provider,
             )
             logger.info("[%s] Search-verify complete: %d queries", session_id, len(search_results))
-
     def run_pipeline_sync(
         self,
         session_id: str,
@@ -329,8 +328,6 @@ class RoundtableService:
             self.run_pipeline(session_id, segments, mode, title, agent_count, lang),
             name="run_pipeline_sync — use run_pipeline() directly in async context",
         )
-
-
 def _build_forbidden_map(agent_ids: list[str]) -> dict[str, list[str]]:
     """Build a mapping of agent_id → forbidden rules from the skill registry.
 

@@ -61,6 +61,20 @@ class TestProductManager:
         review = agent.analyze(evidence)
         assert len(review.claims) >= 1
 
+    def test_recommendation_evidence_ids_use_chunk_ids(self):
+        from roundtable.models import TranscriptChunk
+        chunks = [
+            TranscriptChunk(
+                chunk_id="t_0", session_id="s_1", speaker="张", text="我们决定先做文本导入。",
+            ),
+        ]
+        evidence = EvidencePacket(session_id="s_1", transcript_chunks=chunks)
+        agent = ProductManager()
+        review = agent.analyze(evidence)
+        recommendation_claims = [c for c in review.claims if c.claim_type.value == "recommendation"]
+        assert recommendation_claims
+        assert recommendation_claims[0].evidence_ids == ["t_0"]
+
 
 class TestArchitect:
     def test_analyze_returns_review(self):

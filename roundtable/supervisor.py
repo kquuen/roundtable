@@ -396,6 +396,7 @@ async def _detect_contradictions_async(
             claim_agent_map[claim.claim_id] = ar.agent_id
 
     # Collect approved claims with their agent info
+    claims_pairs = _flatten_claims(agent_reviews)
     approved = []
     review_index: dict[str, int] = {}  # claim_id → index in reviews
     for i, r in enumerate(reviews):
