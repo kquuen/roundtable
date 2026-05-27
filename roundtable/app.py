@@ -11,9 +11,14 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
-from importlib.metadata import version
+from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
 from typing import Optional
+
+try:
+    __version__ = version("roundtable")
+except PackageNotFoundError:
+    __version__ = "0.2.0"
 
 import json as _json
 
@@ -106,7 +111,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="圆桌会议 Roundtable API",
-    version=version("roundtable"),
+    version=__version__,
     description="AI 专家圆桌工作台后端 API — LLM 驱动 + 持久化",
     lifespan=lifespan,
     default_response_class=Utf8JSONResponse,

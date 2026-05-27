@@ -1,0 +1,10 @@
+fastapi==0.136.1
+httpx==0.28.1
+httpx-sse==0.4.3
+openai==2.38.0
+openapi-pydantic==0.5.1
+pydantic==2.13.3
+pydantic-settings==2.14.0
+pydantic_core==2.46.3
+pydub==0.25.1
+uvicorn==0.46.0
