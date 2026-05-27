@@ -217,16 +217,17 @@ async def upload_evidence(req: UploadEvidenceRequest):
 
 @app.post("/speak")
 async def speak(audio: UploadFile = File(...)):
-    """Upload an audio file → transcribe via Whisper → create session + evidence.
+    """Upload an audio file → transcribe via Whisper or MiMo → create session + evidence.
 
     Accepts: mp3, wav, m4a, ogg, webm
     Returns: session_id + transcript segments
 
-    Requires: OPENAI_API_KEY (for Whisper API)
+    Priority:
+      1. OpenAI Whisper API (requires OPENAI_API_KEY)
+      2. MiMo audio understanding (requires MIMO_API_KEY)
     """
     import tempfile
     from roundtable.asr import WhisperAdapter
-    from roundtable.store import SessionStore
 
     # Validate file type
     ALLOWED_MIMES = {
@@ -238,7 +239,7 @@ async def speak(audio: UploadFile = File(...)):
     if mime and not mime.startswith("audio/") and mime not in ALLOWED_MIMES:
         raise HTTPException(400, f"Unsupported audio type: {mime}")
 
-    # Validate size (25 MB max)
+    # Validate size (25 MB max for Whisper; MiMo Base64 limit ~37 MB raw)
     MAX_AUDIO_BYTES = 25 * 1024 * 1024
     content = await audio.read()
     if len(content) > MAX_AUDIO_BYTES:
@@ -255,15 +256,33 @@ async def speak(audio: UploadFile = File(...)):
         tmp_path = Path(tmp.name)
 
     try:
-        # Transcribe
-        adapter = WhisperAdapter(backend="whisper_api")
-        try:
-            result = await adapter.transcribe_async(tmp_path)
-        except Exception as e:
-            logger.warning("Whisper transcription failed: %s", e)
+        # Transcribe — try Whisper first, fallback to MiMo
+        result = None
+        backend_used = ""
+
+        if os.getenv("OPENAI_API_KEY"):
+            try:
+                adapter = WhisperAdapter(backend="whisper_api")
+                result = await adapter.transcribe_async(tmp_path)
+                backend_used = "whisper_api"
+            except Exception as e:
+                logger.warning("Whisper transcription failed: %s", e)
+
+        if result is None and os.getenv("MIMO_API_KEY"):
+            try:
+                adapter = WhisperAdapter(backend="mimo")
+                result = await adapter.transcribe_async(tmp_path)
+                backend_used = "mimo"
+            except Exception as e:
+                logger.warning("MiMo transcription failed: %s", e)
+
+        if result is None:
             return {
                 "error": "transcription_failed",
-                "detail": str(e)[:300],
+                "detail": (
+                    "No transcription backend available. "
+                    "Set OPENAI_API_KEY (Whisper) or MIMO_API_KEY (MiMo)."
+                ),
                 "filename": audio.filename,
             }
 

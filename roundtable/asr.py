@@ -1,7 +1,8 @@
-"""Phase 7B: 语音转写 — Whisper API + 按时长分片。
+"""Phase 7B: 语音转写 — Whisper API / MiMo API + 按时长分片。
 
 WhisperAdapter:
   - backend='whisper_api': 调用 OpenAI Whisper API（复用 openai 依赖）
+  - backend='mimo': 调用小米 MiMo 音频理解 API（Base64 传入）
   - 长音频按时长分片（20 min/段），合并结果
   - pydub + ffmpeg 处理格式转换和分片
 """
@@ -34,14 +35,14 @@ class WhisperAdapter:
         self,
         backend: str = "whisper_api",
         api_key: str | None = None,
-        model: str = "whisper-1",
+        model: str | None = None,
         language: str = "zh",
     ):
         self.backend = backend
-        self.model = model
         self.language = language
 
         if backend == "whisper_api":
+            self.model = model or "whisper-1"
             self._api_key = api_key or os.getenv("OPENAI_API_KEY")
             if not self._api_key:
                 raise ValueError(
@@ -50,6 +51,20 @@ class WhisperAdapter:
                     "or export OPENAI_API_KEY='sk-...' (bash)."
                 )
             self._client = AsyncOpenAI(api_key=self._api_key)
+
+        elif backend == "mimo":
+            self.model = model or "mimo-v2.5"
+            self._api_key = api_key or os.getenv("MIMO_API_KEY")
+            if not self._api_key:
+                raise ValueError(
+                    "MIMO_API_KEY not set. Needed for MiMo audio understanding. "
+                    "Export it: $env:MIMO_API_KEY='sk-...' (PowerShell) "
+                    "or export MIMO_API_KEY='sk-...' (bash)."
+                )
+            self._client = AsyncOpenAI(
+                api_key=self._api_key,
+                base_url="https://api.xiaomimimo.com/v1",
+            )
 
     # ── Public API ──
 
@@ -71,6 +86,9 @@ class WhisperAdapter:
 
         if self.backend == "whisper_api":
             return await self._transcribe_api(audio_path)
+
+        if self.backend == "mimo":
+            return await self._transcribe_mimo(audio_path)
 
         raise ValueError(f"Unknown backend: {self.backend}")
 
@@ -154,6 +172,78 @@ class WhisperAdapter:
 
         detected_lang = getattr(response, "language", None)
         return segments, detected_lang
+
+    # ── MiMo API ──
+
+    async def _transcribe_mimo(self, audio_path: Path) -> ASRResult:
+        """MiMo 音频理解转写。Base64 传入，返回整段文本。"""
+        import base64
+
+        mime_type = self._guess_mime_type(audio_path)
+        with open(audio_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        data_uri = f"data:{mime_type};base64,{b64}"
+
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是一个专业的语音转写助手。请准确转写用户提供的音频内容，"
+                        "只输出转写后的原始文本，不要添加任何解释、总结、评论或额外说明。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {"data": data_uri},
+                        },
+                        {
+                            "type": "text",
+                            "text": "请转写这段音频的内容。",
+                        },
+                    ],
+                },
+            ],
+            max_completion_tokens=4096,
+        )
+
+        msg = response.choices[0].message
+        text = (msg.content or "").strip()
+        if not text:
+            text = (getattr(msg, "reasoning_content", None) or "").strip()
+
+        duration = self._get_duration(audio_path)
+        return ASRResult(
+            segments=[
+                ASRSegment(
+                    speaker="Speaker",
+                    text=text,
+                    start=0.0,
+                    end=duration,
+                    confidence=1.0,
+                )
+            ],
+            language=self.language,
+            duration=duration,
+            model_used=self.model,
+        )
+
+    def _guess_mime_type(self, audio_path: Path) -> str:
+        """根据文件后缀猜测 MIME 类型。"""
+        ext = audio_path.suffix.lower()
+        mapping = {
+            ".mp3": "audio/mpeg",
+            ".wav": "audio/wav",
+            ".flac": "audio/flac",
+            ".m4a": "audio/mp4",
+            ".ogg": "audio/ogg",
+            ".webm": "audio/webm",
+        }
+        return mapping.get(ext, "audio/mpeg")
 
     # ── Audio utilities ──
 
