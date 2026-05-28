@@ -1,5 +1,8 @@
 """Phase 2: Skills + Agents + Orchestrator tests."""
 
+import os
+from pathlib import Path
+
 import pytest
 from roundtable.skills import load_skill, list_skills, register_skill, BUILTIN_SKILLS
 from roundtable.models import SkillManifest, EvidencePacket
@@ -7,6 +10,19 @@ from roundtable.agents import (
     ProductManager, Architect, ProjectManager, BusinessAnalyst, SupervisorAgent,
 )
 from roundtable.orchestrator import run_orchestrator
+from roundtable.config import ConfigManager
+from roundtable.providers import ProviderRouter, OpenAIProvider
+
+
+def setup_module(module):
+    """Ensure no real API keys leak into agent auto-resolution during tests."""
+    os.environ.pop("DEEPSEEK_API_KEY", None)
+    os.environ.pop("ANTHROPIC_API_KEY", None)
+
+
+def teardown_module(module):
+    ConfigManager.reset()
+    ProviderRouter.reset()
 
 
 class TestSkillRegistry:
@@ -145,3 +161,37 @@ class TestOrchestrator:
         evidence = EvidencePacket(session_id="s_5", transcript_chunks=chunks)
         reviews = run_orchestrator(evidence, agent_count=10)
         assert len(reviews) == 5  # capped
+
+    def test_agents_auto_resolve_provider_when_provider_omitted(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+
+        yaml_content = """
+providers:
+  deepseek:
+    protocol: openai
+    base_url: https://api.deepseek.com/v1
+    api_key: ${DEEPSEEK_API_KEY}
+    timeout: 30
+    models:
+      - id: deepseek-chat
+agent_models:
+  product_manager: deepseek/deepseek-chat
+  architect: deepseek/deepseek-chat
+  project_manager: deepseek/deepseek-chat
+"""
+        config_path = tmp_path / "providers.yaml"
+        config_path.write_text(yaml_content, encoding="utf-8")
+
+        ConfigManager.reset()
+        ProviderRouter.reset()
+        ConfigManager._instance = ConfigManager(config_path=config_path)
+
+        from roundtable.orchestrator import create_agents
+
+        agents = create_agents(agent_count=3)
+        assert len(agents) == 3
+        assert all(agent.provider is not None for agent in agents)
+        assert all(isinstance(agent.provider, OpenAIProvider) for agent in agents)
+
+        ConfigManager.reset()
+        ProviderRouter.reset()

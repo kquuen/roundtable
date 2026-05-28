@@ -18,6 +18,33 @@ class TestRoot:
         assert r.status_code == 200
         assert r.json()["status"] == "ok"
 
+    def test_llm_enabled_false_when_provider_key_missing(self, monkeypatch, tmp_path):
+        from roundtable.config import ConfigManager
+
+        yaml_content = """
+providers:
+  deepseek:
+    protocol: openai
+    base_url: https://api.deepseek.com/v1
+    api_key: ""
+    timeout: 60
+    models:
+      - id: deepseek-chat
+agent_models:
+  product_manager: deepseek/deepseek-chat
+"""
+        config_path = tmp_path / "providers.yaml"
+        config_path.write_text(yaml_content, encoding="utf-8")
+
+        monkeypatch.setattr("roundtable.config.ConfigManager._instance", ConfigManager(config_path=config_path))
+
+        r1 = client.get("/")
+        r2 = client.get("/health")
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        assert r1.json()["llm_enabled"] is False
+        assert r2.json()["llm_enabled"] is False
+
 
 class TestSession:
     def test_create_session(self):
@@ -99,6 +126,14 @@ class TestRoundtable:
         report = r2.json()["report"]
         assert "# 圆桌会议审查报告" in report
         assert "## 摘要" in report
+
+    def test_quick_roundtable_endpoint_works(self):
+        """Quick endpoint should not depend on removed global provider."""
+        r = client.post("/roundtable/quick", json={"question": "我应该先做MVP吗？"})
+        assert r.status_code == 200
+        body = r.json()
+        assert "session_id" in body
+        assert "report" in body
 
 
 class TestTeam:

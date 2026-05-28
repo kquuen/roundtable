@@ -154,14 +154,12 @@ class DebateEngine:
 
     async def _run_round1(self, evidence, agents) -> list[AgentReview]:
         """并发调度所有 Agent 做独立分析。"""
-        from roundtable.orchestrator import run_orchestrator_async, run_orchestrator
+        from roundtable.orchestrator import run_orchestrator_async
 
-        if self.provider is not None:
-            return await run_orchestrator_async(
-                evidence, agent_count=len(agents), provider=self.provider,
-                domain_name=self.domain_name,
-            )
-        return run_orchestrator(evidence, agent_count=len(agents), domain_name=self.domain_name)
+        return await run_orchestrator_async(
+            evidence, agent_count=len(agents), provider=self.provider,
+            domain_name=self.domain_name, budget=self.budget,
+        )
 
     # ── Peer map ──
 
@@ -206,11 +204,10 @@ class DebateEngine:
         agent_id = agent.agent_id
         args = []
 
-        if self.provider is not None:
-            # LLM 路径: 调用 agent.analyze_async with peer_reviews
-            review = await agent.analyze_async(evidence, peer_reviews=peers)
+        # LLM 路径（provider 已内嵌在 agent 中）或 mock 降级
+        if agent.provider is not None:
+            review = await agent.analyze_async(evidence, peer_reviews=peers, budget=self.budget)
         else:
-            # Mock 降级: 模板化辩论
             review = agent._analyze_debate_mock(evidence, peers)
 
         # Read raw claims data for position (Bug 5: preserved from LLM parse)
@@ -355,6 +352,24 @@ class AnchoredDebateEngine:
     def __init__(self, provider=None):
         self.provider = provider
 
+    async def _provider_call(self, prompt: str, max_tokens: int) -> str:
+        """Call provider using the unified chat interface with backward compatibility."""
+        if self.provider is None:
+            return ""
+
+        if hasattr(self.provider, "chat"):
+            return await self.provider.chat(
+                system_prompt="你是圆桌专家助手。请严格根据用户提供信息输出中文结论。",
+                user_message=prompt,
+                max_tokens=max_tokens,
+                temperature=0.7,
+            )
+
+        if hasattr(self.provider, "complete"):
+            return await self.provider.complete(prompt, max_tokens=max_tokens)
+
+        raise RuntimeError("Provider must implement chat() or complete()")
+
     async def run(
         self,
         interview: InterviewContext,
@@ -422,7 +437,7 @@ class AnchoredDebateEngine:
         prompt = self._build_advocate_prompt(interview)
 
         if self.provider:
-            raw = await self.provider.complete(prompt, max_tokens=600)
+            raw = await self._provider_call(prompt, max_tokens=600)
         else:
             raw = self._mock_advocate(interview)
 
@@ -458,7 +473,7 @@ class AnchoredDebateEngine:
         prompt = self._build_specialist_prompt(skill_id, interview, anchor)
 
         if self.provider:
-            raw = await self.provider.complete(prompt, max_tokens=500)
+            raw = await self._provider_call(prompt, max_tokens=500)
             stance = self._parse_stance(raw)
         else:
             raw, stance = self._mock_specialist(skill_id, anchor)

@@ -9,6 +9,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from importlib.metadata import version, PackageNotFoundError
@@ -22,7 +23,7 @@ except PackageNotFoundError:
 
 import json as _json
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -43,7 +44,7 @@ class Utf8JSONResponse(JSONResponse):
 from roundtable.models import SessionStatus, SessionMode, ReviewResult, AgentReview, SupervisorReview
 from roundtable.evidence import build_evidence_packet
 from roundtable.team import classify_session, recommend_teams
-from roundtable.providers import get_provider, ProviderAdapter
+from roundtable.config import ConfigManager
 from roundtable.store import SessionStore, ReportStore
 from roundtable.memory import MemoryStore
 from roundtable.services import RoundtableService
@@ -67,39 +68,39 @@ _store = SessionStore()
 _reports = ReportStore()
 _memory = MemoryStore()
 
-# Provider — created at startup
-_provider: Optional[ProviderAdapter] = None
-
-def _init_provider() -> ProviderAdapter | None:
-    """Initialize the LLM provider from environment."""
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    if not api_key:
-        return None
-    try:
-        return get_provider(provider="deepseek", api_key=api_key)
-    except Exception:
-        logger.warning("Provider init failed — running in mock mode", exc_info=True)
-        return None
-
-
-def _get_service(provider: ProviderAdapter | None = None) -> RoundtableService:
-    """Build a service instance bound to the provider for this request."""
+def _get_service() -> RoundtableService:
+    """Build a service instance. Agents auto-resolve their own providers."""
     return RoundtableService(
-        provider=provider,
         session_store=_store,
         report_store=_reports,
         memory_store=_memory,
     )
 
+def _llm_enabled() -> bool:
+    """Check if any LLM provider is both configured and usable."""
+    cfg = ConfigManager.get()
+    if not cfg.loaded:
+        return False
+
+    # At least one agent-mapped model must resolve to a provider with a non-empty API key.
+    for model_ref in cfg.list_agent_models().values():
+        resolved = cfg.get_model_config(model_ref)
+        if not resolved:
+            continue
+        pconf, _ = resolved
+        if pconf.protocol in {"openai", "anthropic"} and (pconf.api_key or "").strip():
+            return True
+
+    return False
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _provider
-    _provider = _init_provider()
-    if _provider:
-        logger.info("LLM provider initialized: deepseek")
+    cfg = ConfigManager.get()
+    if cfg.loaded:
+        logger.info("Config loaded: %d providers, %d agent models", len(cfg.list_providers()), len(cfg.list_agent_models()))
     else:
-        logger.warning("DEEPSEEK_API_KEY not set — running in mock mode")
+        logger.warning("Config not loaded — running in mock mode")
     logger.info("Loaded %d persisted sessions", _store.session_count())
 
     # Load YAML skills from skills/ directory
@@ -165,7 +166,7 @@ async def root():
     return {
         "service": "roundtable",
         "version": "0.3.0",
-        "llm_enabled": _provider is not None,
+        "llm_enabled": _llm_enabled(),
         "sessions": _store.session_count(),
     }
 
@@ -345,9 +346,7 @@ async def run_roundtable(req: RunRoundtableRequest):
 
     _store.update_status(req.session_id, SessionStatus.ANALYZING)
 
-    # Delegate to Service Layer
-    provider = None if req.use_mock else _provider
-    svc = _get_service(provider)
+    svc = _get_service()
 
     result = await svc.run_pipeline(
         session_id=req.session_id,
@@ -398,8 +397,7 @@ async def run_debate(req: RunRoundtableRequest):
 
     _store.update_status(req.session_id, SessionStatus.ANALYZING)
 
-    provider = None if req.use_mock else _provider
-    svc = _get_service(provider)
+    svc = _get_service()
 
     result = await svc.run_debate_pipeline(
         session_id=req.session_id,
@@ -625,8 +623,96 @@ async def health_check():
     return {
         "status": "ok",
         "sessions": _store.session_count(),
-        "llm_enabled": _provider is not None,
+        "llm_enabled": _llm_enabled(),
     }
+
+
+@app.get("/providers")
+async def list_providers():
+    """Return configured LLM providers and agent model mappings.
+
+    Useful for frontends to show which models are available.
+    """
+    cfg = ConfigManager.get()
+    providers = []
+    for pid in cfg.list_providers():
+        p = cfg.get_provider(pid)
+        if p:
+            providers.append({
+                "id": p.id,
+                "name": p.name,
+                "protocol": p.protocol,
+                "base_url": p.base_url,
+                "models": [m.get("id") for m in p.models],
+            })
+    return {
+        "providers": providers,
+        "agent_models": cfg.list_agent_models(),
+        "voice": cfg.get_voice_config(),
+        "loaded": cfg.loaded,
+    }
+
+
+# ══════════════════════════════════════════════
+# 实时语音通话模式：WebSocket
+# ══════════════════════════════════════════════
+
+import os
+
+MAX_VOICE_CONCURRENT = int(os.getenv("VOICE_MAX_CONCURRENT", "50"))
+_voice_semaphore = asyncio.Semaphore(MAX_VOICE_CONCURRENT)
+_voice_active_count = 0
+
+
+@app.websocket("/ws/voice")
+async def voice_websocket(websocket: WebSocket):
+    """实时语音通话 WebSocket 入口。
+
+    用户通过麦克风实时发送 PCM 音频流，后端实时识别并回复文字。
+
+    前端协议详见 roundtable/voice/protocol.py
+
+    Usage (概念):
+        1. 连接 wss://host/ws/voice
+        2. 收到 {"type": "ready", "session_id": "v_xxx"}
+        3. 发送 {"type": "init", "mode": "qa", "template": "general"}
+        4. 循环发送 {"type": "audio", "data": "base64pcm...", "seq": N}
+        5. 收到 {"type": "transcript_final", "text": "..."}
+        6. 收到 {"type": "ai_response", "text": "..."}
+        7. 发送 {"type": "close"} 或断开连接
+    """
+    global _voice_active_count
+
+    if _voice_semaphore.locked():
+        await websocket.close(code=1013, reason="Server busy: too many voice sessions")
+        return
+
+    async with _voice_semaphore:
+        await websocket.accept()
+        _voice_active_count += 1
+        logger.info("Voice WebSocket accepted. Active: %d/%d", _voice_active_count, MAX_VOICE_CONCURRENT)
+
+        try:
+            from roundtable.voice.session import VoiceSession
+
+            session = VoiceSession(
+                frontend_ws=websocket,
+                mode="qa",
+                template="general",
+            )
+            await session.run()
+
+        except WebSocketDisconnect:
+            logger.info("Voice WebSocket disconnected")
+        except Exception as e:
+            logger.error("Voice WebSocket error: %s", e, exc_info=True)
+            try:
+                await websocket.close(code=1011, reason=f"Internal error: {e}")
+            except Exception:
+                pass
+        finally:
+            _voice_active_count -= 1
+            logger.info("Voice WebSocket closed. Active: %d/%d", _voice_active_count, MAX_VOICE_CONCURRENT)
 
 
 # ══════════════════════════════════════════════
@@ -706,7 +792,7 @@ async def quick_roundtable(req: QuickRequest):
         user_bias_signal=bias_signal,
     )
 
-    engine = AnchoredDebateEngine(provider=_provider)
+    engine = AnchoredDebateEngine()
     report = await engine.run(interview, mode=req.mode)
 
     # 渲染Markdown报告
@@ -750,7 +836,7 @@ async def quick_roundtable_stream_start(req: QuickRequest):
     # 后台启动辩论
     async def run_debate():
         try:
-            engine = AnchoredDebateEngine(provider=_provider)
+            engine = AnchoredDebateEngine()
             report = await engine.run(interview, mode=req.mode, event_queue=queue)
             md = compose_anchored_report(report)
             await queue.put({

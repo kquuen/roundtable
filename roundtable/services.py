@@ -14,13 +14,25 @@ from roundtable.evidence import build_evidence_packet
 from roundtable.orchestrator import run_orchestrator, run_orchestrator_async
 from roundtable.supervisor import review_claims, review_claims_async
 from roundtable.report import compose_report
-from roundtable.providers import ProviderAdapter
 from roundtable.store import SessionStore, ReportStore
 from roundtable.memory import MemoryStore
 from roundtable.skills import load_skill
 from roundtable.utils import run_async_safely
 
 logger = logging.getLogger("roundtable.services")
+_PROVIDER_UNSET = object()
+
+
+def _has_llm_provider(agent_reviews) -> bool:
+    """Infer whether any agent review came from an LLM-backed agent."""
+    return any(getattr(ar, "provider", None) for ar in agent_reviews)
+
+
+def _resolve_mode(agent_reviews, provider_explicit: bool, provider) -> str:
+    """Resolve response mode based on explicit provider intent and runtime agent state."""
+    if provider_explicit:
+        return "llm" if provider is not None else "mock"
+    return "llm" if _has_llm_provider(agent_reviews) else "mock"
 
 
 # ── Token Budget ──
@@ -76,12 +88,15 @@ class RoundtableService:
 
     def __init__(
         self,
-        provider: ProviderAdapter | None = None,
+        provider=_PROVIDER_UNSET,
         session_store: SessionStore | None = None,
         report_store: ReportStore | None = None,
         memory_store: MemoryStore | None = None,
     ):
         self.provider = provider
+        self._provider_explicit = provider is not _PROVIDER_UNSET
+        if provider is _PROVIDER_UNSET:
+            self.provider = None
         self.session_store = session_store
         self.report_store = report_store
         self.memory_store = memory_store
@@ -104,10 +119,7 @@ class RoundtableService:
         from roundtable.orchestrator import create_agents as _create_agents
 
         budget = TokenBudget(max_tokens=max_tokens)
-
-        # Inject budget into provider for real token tracking (Bug 7)
-        if self.provider is not None:
-            self.provider.budget = budget
+        auto_llm_attempted = False
 
         logger.info("[%s] Debate pipeline start: mode=%s, agents=%d", session_id, mode, agent_count)
 
@@ -120,8 +132,13 @@ class RoundtableService:
         domain_name = domain.name
         logger.info("[%s] Debate domain classified: %s", session_id, domain_name)
 
-        # 2. Create agents
-        agents = _create_agents(agent_count=agent_count, provider=self.provider, domain_name=domain_name)
+        # 2. Create agents (agents auto-resolve providers unless explicitly injected)
+        if self._provider_explicit:
+            agents = _create_agents(
+                agent_count=agent_count, provider=self.provider, domain_name=domain_name,
+            )
+        else:
+            agents = _create_agents(agent_count=agent_count, domain_name=domain_name)
 
         # 3. Run debate
         engine = DebateEngine(provider=self.provider, budget=budget, domain_name=domain_name)
@@ -172,10 +189,6 @@ class RoundtableService:
         """
         budget = TokenBudget(max_tokens=max_tokens)
 
-        # Inject budget into provider for real token tracking (Bug 7)
-        if self.provider is not None:
-            self.provider.budget = budget
-
         # 1. Evidence
         logger.info("[%s] Pipeline start: mode=%s, agents=%d, budget=%d",
                      session_id, mode, agent_count, max_tokens)
@@ -189,16 +202,34 @@ class RoundtableService:
             domain_name = domain.name
         logger.info("[%s] Domain classified: %s", session_id, domain_name)
 
-        # 2. Agent analysis (async with provider, sync without)
-        if self.provider is not None:
-            agent_reviews = await run_orchestrator_async(
+        # 2. Agent analysis. Explicit provider -> async path; otherwise auto (agent-level resolve/mock).
+        if self._provider_explicit:
+            if self.provider is not None:
+                agent_reviews = await run_orchestrator_async(
+                    evidence,
+                    agent_count=agent_count,
+                    provider=self.provider,
+                    domain_name=domain_name,
+                    budget=budget,
+                )
+            else:
+                agent_reviews = run_orchestrator(
+                    evidence,
+                    agent_count=agent_count,
+                    provider=None,
+                    domain_name=domain_name,
+                )
+        else:
+            agent_reviews, meta = await run_orchestrator_async(
                 evidence,
                 agent_count=agent_count,
-                provider=self.provider,
                 domain_name=domain_name,
+                budget=budget,
+                return_meta=True,
             )
-        else:
-            agent_reviews = run_orchestrator(evidence, agent_count=agent_count, domain_name=domain_name)
+            auto_llm_attempted = bool(meta.get("llm_attempted"))
+        if self._provider_explicit:
+            auto_llm_attempted = False
         logger.info("[%s] Agent analysis complete: %d reviews", session_id, len(agent_reviews))
 
         # Budget: estimate agent analysis cost
@@ -257,7 +288,11 @@ class RoundtableService:
 
         return PipelineResult(
             session_id=session_id,
-            mode="llm" if self.provider else "mock",
+            mode=(
+                _resolve_mode(agent_reviews, self._provider_explicit, self.provider)
+                if self._provider_explicit
+                else ("llm" if auto_llm_attempted else "mock")
+            ),
             domain_name=domain_name,
             agent_reviews=[ar.model_dump() for ar in agent_reviews],
             supervisor_reviews=[sr.model_dump() for sr in supervisor_reviews],

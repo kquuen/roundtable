@@ -7,7 +7,7 @@ import logging
 from typing import Optional
 
 from roundtable.models import AgentReview, EvidencePacket
-from roundtable.providers import ProviderAdapter
+from roundtable.providers import BaseLLMProvider
 from roundtable.registry import get_registry
 from roundtable.utils import run_async_safely
 
@@ -16,10 +16,12 @@ DEFAULT_AGENT_TIMEOUT = 30
 
 logger = logging.getLogger("roundtable.orchestrator")
 
+_PROVIDER_UNSET = object()
+
 
 def create_agents(
     agent_count: int = 5,
-    provider: ProviderAdapter | None = None,
+    provider=_PROVIDER_UNSET,
     domain_name: str | None = None,
 ):
     """Create agents from the registry, selecting up to agent_count.
@@ -36,10 +38,14 @@ def create_agents(
             selected_ids = [sid for sid in domain.agents if sid in registry.list_all()]
             if not selected_ids:
                 selected_ids = registry.list_all()[:min(domain.agent_count, len(registry.list_all()))]
+            if provider is _PROVIDER_UNSET:
+                return [registry.create(sid) for sid in selected_ids]
             return [registry.create(sid, provider=provider) for sid in selected_ids]
 
     all_ids = registry.list_all()
     selected_ids = all_ids[:min(agent_count, len(all_ids))]
+    if provider is _PROVIDER_UNSET:
+        return [registry.create(sid) for sid in selected_ids]
     return [registry.create(sid, provider=provider) for sid in selected_ids]
 
 
@@ -50,7 +56,7 @@ _create_agents = create_agents
 def run_orchestrator(
     evidence: EvidencePacket,
     agent_count: int = 5,
-    provider: ProviderAdapter | None = None,
+    provider: BaseLLMProvider | None | object = _PROVIDER_UNSET,
     timeout: float = DEFAULT_AGENT_TIMEOUT,
     domain_name: str | None = None,
 ) -> list[AgentReview]:
@@ -59,14 +65,25 @@ def run_orchestrator(
     When provider is set, runs agents concurrently via asyncio.
     Without provider, runs mock agents synchronously.
     """
-    if provider is not None:
+    if provider is not _PROVIDER_UNSET and provider is not None:
         return run_async_safely(
-            run_orchestrator_async(evidence, agent_count, provider, timeout, domain_name),
+            run_orchestrator_async(
+                evidence,
+                agent_count=agent_count,
+                provider=provider,
+                timeout=timeout,
+                domain_name=domain_name,
+            ),
             name="run_orchestrator — use run_orchestrator_async() instead",
         )
 
-    # Mock path: synchronous keyword-based agents
-    selected = _create_agents(agent_count=agent_count, domain_name=domain_name)
+    # Synchronous path stays deterministic/mock unless a provider is explicitly injected.
+    selected = _create_agents(
+        agent_count=agent_count,
+        provider=None if provider is _PROVIDER_UNSET else provider,
+        domain_name=domain_name,
+    )
+
     reviews: list[AgentReview] = []
     for agent in selected:
         review = agent.analyze(evidence)
@@ -77,10 +94,12 @@ def run_orchestrator(
 async def run_orchestrator_async(
     evidence: EvidencePacket,
     agent_count: int = 5,
-    provider: ProviderAdapter | None = None,
+    provider=_PROVIDER_UNSET,
     domain_name: str | None = None,
     timeout: float = DEFAULT_AGENT_TIMEOUT,
-) -> list[AgentReview]:
+    budget=None,
+    return_meta: bool = False,
+):
     """Async concurrent dispatch — all agents run in parallel via asyncio.gather().
 
     Each agent gets its own timeout. If an agent times out or errors,
@@ -95,15 +114,29 @@ async def run_orchestrator_async(
     Returns:
         List of AgentReview from each agent
     """
-    selected = _create_agents(agent_count=agent_count, provider=provider, domain_name=domain_name)
+    if provider is _PROVIDER_UNSET:
+        selected = _create_agents(agent_count=agent_count, domain_name=domain_name)
+    else:
+        selected = _create_agents(agent_count=agent_count, provider=provider, domain_name=domain_name)
+    llm_attempted = any(agent.provider is not None for agent in selected)
+
+    # Inject budget into each agent's provider
+    if budget is not None:
+        for agent in selected:
+            if agent.provider is not None:
+                agent.provider.budget = budget
+
     logger.info("Dispatching %d agents concurrently (timeout=%ds, domain=%s)", len(selected), timeout, domain_name or "default")
 
     async def _run_one(agent) -> AgentReview:
         try:
-            return await asyncio.wait_for(
-                agent.analyze_async(evidence),
-                timeout=timeout,
-            )
+            if agent.provider is not None:
+                return await asyncio.wait_for(
+                    agent.analyze_async(evidence, budget=budget),
+                    timeout=timeout,
+                )
+            # Mock path: synchronous keyword-based analysis
+            return agent.analyze(evidence)
         except asyncio.TimeoutError:
             logger.warning("Agent %s timed out after %ds", agent.agent_id, timeout)
             return AgentReview(
@@ -124,4 +157,7 @@ async def run_orchestrator_async(
             )
 
     reviews = await asyncio.gather(*[_run_one(a) for a in selected])
-    return list(reviews)
+    collected = list(reviews)
+    if return_meta:
+        return collected, {"llm_attempted": llm_attempted}
+    return collected

@@ -12,7 +12,9 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from roundtable.agents import Agent
-    from roundtable.providers import ProviderAdapter
+    from roundtable.providers import BaseLLMProvider
+
+_PROVIDER_UNSET = object()
 
 
 class AgentRegistry:
@@ -39,7 +41,7 @@ class AgentRegistry:
     def create(
         self,
         skill_id: str,
-        provider: "ProviderAdapter | None" = None,
+        provider: "BaseLLMProvider | None | object" = _PROVIDER_UNSET,
     ) -> "Agent":
         """Create an Agent instance for the given skill_id.
 
@@ -50,7 +52,10 @@ class AgentRegistry:
                 f"Skill '{skill_id}' not registered. "
                 f"Available: {list(self._agents)}"
             )
-        return self._agents[skill_id](provider=provider)
+        agent_cls = self._agents[skill_id]
+        if provider is _PROVIDER_UNSET:
+            return agent_cls()
+        return agent_cls(provider=provider)
 
     def list_all(self) -> list[str]:
         """Return all registered skill IDs."""
