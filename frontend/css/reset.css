@@ -1,0 +1,22 @@
+/* ═══════════════════════════════════════
+   RESET
+   ═══════════════════════════════════════ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px;scroll-behavior:smooth}
+body{
+  font-family:var(--font-body);background:var(--bg);color:var(--text-1);
+  min-height:100vh;overflow-x:hidden;-webkit-font-smoothing:antialiased;
+  transition:background .4s var(--ease),color .4s var(--ease);
+}
+html[data-theme="light"] body{
+  background:
+    radial-gradient(620px 360px at 12% 18%, rgba(111,91,69,.06), transparent 62%),
+    radial-gradient(560px 320px at 86% 74%, rgba(111,91,69,.05), transparent 64%),
+    linear-gradient(180deg,#f5efe5 0%,#eee5d8 100%);
+}
+html[data-theme="light"] .app{
+  background-image:
+    linear-gradient(135deg, rgba(143,118,88,.03) 0%, transparent 48%),
+    radial-gradient(circle at 75% 25%, rgba(143,118,88,.045) 0%, transparent 46%);
+}
+

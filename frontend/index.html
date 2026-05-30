@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Roundtable</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fontsapi.zeoseven.com/820/main/result.css">
+<link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,300;0,400;0,600;0,700;1,300&family=Noto+Sans+SC:wght@300;400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/landing.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/pages.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/animations.css">
+<link rel="stylesheet" href="css/toast.css">
+</head>
+<body>
+
+<!-- ═══ LANDING ═══ -->
+<div id="landing">
+  <canvas class="taiji-canvas" id="taijiCanvas"></canvas>
+  <div class="landing-theme">
+    <button class="icon-btn" onclick="toggleTheme(event)" title="Toggle theme">☀</button>
+  </div>
+  <div class="landing-content">
+    <div class="landing-title">Roundtable</div>
+    <div class="seal-stamp">圓桌</div>
+    <div class="landing-sub">Multi-Perspective Review Engine</div>
+    <div class="landing-cta">click anywhere to enter</div>
+  </div>
+</div>
+
+<!-- ═══ APP ═══ -->
+<div class="app" id="app">
+  <header class="header">
+    <div class="logo">
+      <span class="logo-mark"><span>R</span>oundtable</span>
+      <span class="logo-sub">review engine</span>
+    </div>
+    <div class="header-right">
+      <div class="status-pill"><span class="status-dot"></span><span id="apiStatus">connecting...</span></div>
+      <button class="icon-btn" onclick="toggleTheme()" title="Toggle theme">☀</button>
+      <div class="lang-toggle">
+        <button class="lang-btn active" onclick="setLang('zh')">中</button>
+        <button class="lang-btn" onclick="setLang('en')">EN</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="main">
+    <nav class="sidebar">
+      <div class="step-item active" data-step="1" onclick="goStep(1)"><span class="step-num">1</span><div><div class="step-label">创建会话</div><div class="step-desc">选择模式，命名</div></div></div>
+      <div class="step-item" data-step="2" onclick="goStep(2)"><span class="step-num">2</span><div><div class="step-label">上传证据</div><div class="step-desc">导入文本片段</div></div></div>
+      <div class="step-item" data-step="3" onclick="goStep(3)"><span class="step-num">3</span><div><div class="step-label">专家团队</div><div class="step-desc">推荐 + 雷达图</div></div></div>
+      <div class="step-item" data-step="4" onclick="goStep(4)"><span class="step-num">4</span><div><div class="step-label">运行分析</div><div class="step-desc">配置参数，启动</div></div></div>
+      <div class="step-item" data-step="5" onclick="goStep(5)"><span class="step-num">5</span><div><div class="step-label">审查报告</div><div class="step-desc">结论与统计</div></div></div>
+      <div class="sidebar-footer">
+        <div class="session-badge"><span class="session-id" id="sessionId">—</span><span class="session-status" id="sessionStatus">未创建</span></div>
+      </div>
+    </nav>
+
+    <main class="content">
+      <!-- PAGE 1 -->
+      <div class="page active" id="page1">
+        <h1 class="page-title">创建审查会话</h1>
+        <p class="page-subtitle">选择模式并命名。每轮审查独立运行，从证据导入到报告生成。</p>
+        <div class="create-grid">
+          <div class="mode-card selected" onclick="selectMode('meeting',this)">
+            <span class="cloud-corner cloud-tl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 16C4 10 8 6 14 6C10 6 6 10 6 16"/><path d="M6 13C6 8.5 9 5 14 5"/></svg></span>
+            <span class="cloud-corner cloud-br"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 16C4 10 8 6 14 6C10 6 6 10 6 16"/><path d="M6 13C6 8.5 9 5 14 5"/></svg></span>
+            <div class="mode-name">会议审查</div>
+            <div class="mode-desc">多人会议记录导入，多视角协作分析，生成结构化审查报告。</div>
+          </div>
+          <div class="mode-card" onclick="selectMode('personal_roundtable',this)">
+            <span class="cloud-corner cloud-tl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 16C4 10 8 6 14 6C10 6 6 10 6 16"/><path d="M6 13C6 8.5 9 5 14 5"/></svg></span>
+            <span class="cloud-corner cloud-br"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 16C4 10 8 6 14 6C10 6 6 10 6 16"/><path d="M6 13C6 8.5 9 5 14 5"/></svg></span>
+            <div class="mode-name">个人圆桌</div>
+            <div class="mode-desc">个人思考笔记，多维度审视想法，发现思考盲区。</div>
+          </div>
+        </div>
+        <div class="input-group">
+          <label class="input-label">会话标题</label>
+          <input type="text" class="input-field" id="sessionTitle" placeholder="例：Q3 产品规划讨论" autocomplete="off">
+        </div>
+        <div class="nav-buttons"><button class="btn-primary" onclick="createSession()">创建会话 →</button></div>
+      </div>
+
+      <!-- PAGE 2 -->
+      <div class="page" id="page2">
+        <h1 class="page-title">上传会议证据</h1>
+        <p class="page-subtitle">语音优先：上传音频自动转写并回填证据。文本 JSON 作为高级输入保留。</p>
+        <div class="voice-priority">
+          <div class="voice-title">语音输入（推荐）</div>
+          <div class="voice-desc">上传会议录音后将调用 Whisper 转写，自动生成结构化 segments，并直接写入当前会话。</div>
+          <div class="voice-drop" id="voiceDrop" onclick="document.getElementById('audioInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleAudioDrop(event)">
+            <div class="voice-file" id="audioFileName">未选择音频文件</div>
+            <div class="voice-limit">支持 mp3 / wav / m4a / ogg / webm，最大 25MB（点击或拖拽上传）</div>
+            <input type="file" id="audioInput" accept=".mp3,.wav,.m4a,.ogg,.webm" style="display:none" onchange="handleAudioSelect(event)">
+          </div>
+          <div class="voice-ops">
+            <button class="btn-primary" onclick="uploadAudioEvidence()">语音转写并写入证据</button>
+            <span class="voice-status" id="voiceStatus">等待上传</span>
+          </div>
+        </div>
+        <div class="text-advanced collapsed" id="textAdvanced">
+          <button class="text-advanced-toggle" onclick="toggleTextAdvanced()">
+            <span>文本 JSON 输入（高级）</span>
+            <span class="toggle-arrow">▼</span>
+          </button>
+          <div class="text-advanced-body">
+            <div class="drop-zone" id="jsonDrop" onclick="document.getElementById('fileInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleJsonDrop(event)" style="margin-bottom:14px">
+              <div class="drop-zone-icon"> </div>
+              <div class="drop-zone-text">拖拽 JSON 文件到此处，或点击上传</div>
+              <div class="drop-zone-hint">{"segments": [{"speaker": "姓名", "text": "内容"}]}</div>
+              <input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFileUpload(event)">
+            </div>
+            <div class="card">
+              <div class="card-header"><span class="card-title">手动输入</span><span class="card-tag">JSON</span></div>
+              <div class="editor-area">
+                <textarea class="transcript-editor" id="transcriptEditor" placeholder='[
+  {"speaker": "张三", "text": "我们决定先做文本导入功能"},
+  {"speaker": "李四", "text": "技术上用 FastAPI 加 Celery"}
+]'></textarea>
+                <div class="segment-count" id="segmentCount">0 段</div>
+              </div>
+              <div class="editor-hint">每段格式 <code>{"speaker": "名称", "text": "内容"}</code></div>
+            </div>
+          </div>
+        </div>
+        <div class="nav-buttons">
+          <button class="btn-secondary" onclick="goStep(1)">← 上一步</button>
+          <button class="btn-primary" onclick="uploadEvidence()">使用文本证据继续 →</button>
+        </div>
+      </div>
+
+      <!-- PAGE 2.5 — Interview -->
+      <div class="page" id="page2_5">
+        <h1 class="page-title">补充信息</h1>
+        <p class="page-subtitle">根据证据内容，我们需要追问几个关键问题以获得更精准的分析。</p>
+        <div class="interview-questions" id="interviewQuestions"></div>
+        <div class="nav-buttons">
+          <button class="btn-secondary" onclick="goStep(2)">← 上一步</button>
+          <button class="btn-primary" onclick="submitInterview()">继续 →</button>
+        </div>
+      </div>
+
+      <!-- PAGE 3 -->
+      <div class="page" id="page3">
+        <h1 class="page-title">推荐专家团队</h1>
+        <p class="page-subtitle">根据会议内容自动判断类型，推荐最合适的审查团队组合。</p>
+        <div class="session-type-badge"><span id="sessionTypeText">技术</span></div>
+        <div class="team-grid" id="teamGrid"></div>
+        <div class="nav-buttons">
+          <button class="btn-secondary" onclick="goStep(2)">← 上一步</button>
+          <button class="btn-primary" onclick="confirmTeam()">确认团队 →</button>
+        </div>
+      </div>
+
+      <!-- PAGE 4 -->
+      <div class="page" id="page4">
+        <h1 class="page-title">运行分析</h1>
+        <p class="page-subtitle">配置参数，启动审查管道。Mock 模式适合开发测试。</p>
+        <div class="analysis-mode">
+          <button class="analysis-mode-btn active" id="modeReviewBtn" onclick="setAnalysisMode('review',this)">
+            <span class="analysis-mode-title">标准审查</span>
+            <span class="analysis-mode-desc">证据 → 审查 → 记忆 → 报告</span>
+          </button>
+          <button class="analysis-mode-btn" id="modeDebateBtn" onclick="setAnalysisMode('debate',this)">
+            <span class="analysis-mode-title">多 Agent 辩论</span>
+            <span class="analysis-mode-desc">Round 1 → Round 2 → 共识收敛</span>
+          </button>
+        </div>
+        <div class="config-grid">
+          <div class="config-card">
+            <div class="config-label">Agent 数量</div>
+            <div class="slider-wrap">
+              <input type="range" class="slider" id="agentCount" min="1" max="5" value="5" oninput="document.getElementById('agentVal').textContent=this.value">
+              <span class="slider-val" id="agentVal">5</span>
+            </div>
+          </div>
+          <div class="config-card">
+            <div class="config-label">报告语言</div>
+            <div class="lang-toggle" style="margin-top:2px">
+              <button class="lang-btn active" onclick="setRunLang('zh',this)">中文</button>
+              <button class="lang-btn" onclick="setRunLang('en',this)">EN</button>
+            </div>
+          </div>
+          <div class="config-card">
+            <div class="config-label">Mock 模式</div>
+            <div class="toggle-wrap">
+              <label class="toggle"><input type="checkbox" id="useMock"><span class="toggle-track"></span></label>
+              <div><div class="toggle-label">启用 Mock</div><div class="toggle-hint">无需 API Key</div></div>
+            </div>
+          </div>
+          <div class="config-card">
+            <div class="config-label">预算限制</div>
+            <div style="font-family:var(--font-mono);font-size:.76rem;color:var(--text-2);line-height:1.6">Token: 80,000<br>费用: ¥5.00</div>
+          </div>
+        </div>
+        <div class="pipeline">
+          <div class="pipeline-node" id="pipe-evidence"><span class="pipeline-icon"> </span><span class="pipeline-name">构建证据</span></div>
+          <span class="pipeline-arrow">→</span>
+          <div class="pipeline-node" id="pipe-agents"><span class="pipeline-icon"> </span><span class="pipeline-name">分派</span></div>
+          <span class="pipeline-arrow">→</span>
+          <div class="pipeline-node" id="pipe-review"><span class="pipeline-icon"> </span><span class="pipeline-name">审查</span></div>
+          <span class="pipeline-arrow">→</span>
+          <div class="pipeline-node" id="pipe-memory"><span class="pipeline-icon"> </span><span class="pipeline-name">记忆</span></div>
+          <span class="pipeline-arrow">→</span>
+          <div class="pipeline-node" id="pipe-report"><span class="pipeline-icon"> </span><span class="pipeline-name">报告</span></div>
+        </div>
+        <div class="pipeline-hint" id="pipelineHint">当前模式：标准审查流程</div>
+        <div class="run-section"><button class="btn-run" id="runBtn" onclick="runAnalysis()">启动审查</button></div>
+      </div>
+
+      <!-- PAGE 5 -->
+      <div class="page" id="page5">
+        <div class="report-container">
+          <div class="report-header">
+            <div class="report-meta">
+              <div class="report-meta-item"><span class="report-meta-label">Mode</span><span class="report-meta-value" id="reportMode">mock</span></div>
+              <div class="report-meta-item"><span class="report-meta-label">Memories</span><span class="report-meta-value" id="reportMemories">0</span></div>
+              <div class="report-meta-item"><span class="report-meta-label">Type</span><span class="report-meta-value" id="reportType">review</span></div>
+            </div>
+            <div class="report-actions">
+              <button class="btn-ghost" onclick="copyReport()">Copy</button>
+              <button class="btn-ghost" onclick="downloadReport()">Download .md</button>
+            </div>
+          </div>
+          <div class="report-tabs">
+            <button class="report-tab active" id="tab-report" onclick="showReportPanel('report',this)">最终报告</button>
+            <button class="report-tab" id="tab-debate" onclick="showReportPanel('debate',this)">辩论剧场</button>
+          </div>
+          <div class="report-panel active" id="panel-report">
+            <div class="report-body" id="reportBody"></div>
+          </div>
+          <div class="report-panel" id="panel-debate">
+            <div class="debate-stage-bar" id="debateStageBar"></div>
+            <div class="debate-grid">
+              <div class="debate-board">
+                <div class="debate-board-title">观点碰撞</div>
+                <div class="debate-columns">
+                  <div class="debate-column">
+                    <div class="debate-column-title">Round 1 首轮观点</div>
+                    <div class="debate-cards" id="round1Cards"></div>
+                  </div>
+                  <div class="debate-column">
+                    <div class="debate-column-title">Round 2 质疑与修正</div>
+                    <div class="debate-cards" id="round2Cards"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="debate-side">
+                <div class="debate-side-block">
+                  <div class="debate-side-title">共识分层</div>
+                  <div class="consensus-list" id="consensusList"></div>
+                </div>
+                <div class="debate-side-block">
+                  <div class="debate-side-title">冲突记录</div>
+                  <div class="conflict-list" id="conflictList"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="nav-buttons" style="margin-top:34px"><button class="btn-secondary" onclick="goStep(1)">New Session</button></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-text" id="loadingText">Processing...</div></div>
+
+<script src="js/config.js"></script>
+<script src="js/state.js"></script>
+<script src="js/ui/theme.js"></script>
+<script src="js/ui/landing.js"></script>
+<script src="js/ui/navigation.js"></script>
+<script src="js/ui/step1.js"></script>
+<script src="js/ui/step2.js"></script>
+<script src="js/ui/interview.js"></script>
+<script src="js/ui/step3.js"></script>
+<script src="js/ui/step4.js"></script>
+<script src="js/ui/step5.js"></script>
+<script src="js/ui/toast.js"></script>
+<script src="js/ui/loading.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

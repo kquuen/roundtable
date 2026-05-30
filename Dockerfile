@@ -11,6 +11,8 @@ RUN pip install --no-cache-dir setuptools>=68.0 && \
 # Copy source
 COPY roundtable/ ./roundtable/
 COPY skills/ ./skills/
+COPY config/ ./config/
+COPY frontend/ ./frontend/
 COPY data/ ./data/
 COPY tests/ ./tests/
 

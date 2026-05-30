@@ -1,0 +1,71 @@
+/* ═══════════════════════════════════════
+   LANDING — Taiji ink-wash canvas + seal + bamboo scroll
+   ═══════════════════════════════════════ */
+#landing{
+  position:fixed;inset:0;z-index:2000;background:var(--landing-bg);
+  display:flex;align-items:center;justify-content:center;
+  flex-direction:column;cursor:pointer;
+  transition:clip-path .75s cubic-bezier(.77,0,.18,1),opacity .45s var(--ease);
+}
+#landing.scroll-open{clip-path:circle(150% at 50% 50%);opacity:0;pointer-events:none}
+
+/* Taiji ink-wash canvas — subtle background */
+.taiji-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:.55}
+[data-theme="light"] .taiji-canvas{opacity:.4}
+
+.landing-content{position:relative;z-index:1;text-align:center;pointer-events:none}
+
+.landing-title{
+  font-family:var(--font-display);font-size:clamp(3.2rem,9vw,6.5rem);
+  font-weight:300;letter-spacing:.04em;color:var(--text-1);
+  margin-bottom:14px;opacity:0;animation:fadeUp .9s var(--ease) .2s forwards;
+  text-shadow:0 0 40px var(--landing-bg),0 0 80px var(--landing-bg),0 2px 20px rgba(0,0,0,.3);
+}
+
+/* Vermillion seal stamp — 圓桌 (小篆体) */
+.seal-stamp{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:52px;height:52px;margin-bottom:22px;
+  background:#d43a20;color:#fff;
+  font-family:"Chong Xi Small Seal",'FZXiaoZhuanTi-S10','LiSu','STXingkai',serif;
+  font-size:1.25rem;font-weight:700;line-height:1;
+  border-radius:4px;
+  box-shadow:inset 0 0 0 2.5px rgba(255,255,255,.22),0 0 20px rgba(212,58,32,.35),0 0 60px rgba(212,58,32,.1);
+  transform:rotate(-4deg);
+  opacity:0;animation:sealStamp .45s cubic-bezier(.34,1.56,.64,1) .6s forwards;
+  letter-spacing:.08em;
+  writing-mode:vertical-rl;
+}
+[data-theme="light"] .seal-stamp{
+  background:#c23018;
+  box-shadow:inset 0 0 0 2.5px rgba(255,255,255,.18),0 0 18px rgba(194,48,24,.25),0 0 50px rgba(194,48,24,.08);
+}
+@keyframes sealStamp{
+  0%{opacity:0;transform:rotate(-4deg) scale(1.8)}
+  50%{opacity:1;transform:rotate(-4deg) scale(.92)}
+  75%{transform:rotate(-4deg) scale(1.04)}
+  100%{opacity:1;transform:rotate(-4deg) scale(1)}
+}
+
+.landing-sub{
+  font-size:clamp(.72rem,1.4vw,.9rem);
+  color:color-mix(in srgb,var(--text-1) 55%,var(--text-2));
+  letter-spacing:.22em;text-transform:uppercase;font-weight:300;
+  opacity:0;animation:fadeUp .9s var(--ease) .5s forwards;
+  text-shadow:0 0 30px var(--landing-bg),0 0 60px var(--landing-bg);
+}
+.landing-cta{
+  margin-top:56px;font-size:.72rem;color:var(--text-3);
+  letter-spacing:.12em;opacity:0;
+  animation:fadeUp .9s var(--ease) .8s forwards,pulse 2.5s ease-in-out 1.7s infinite;
+}
+@keyframes fadeUp{
+  from{opacity:0;transform:translateY(16px)}
+  to{opacity:1;transform:translateY(0)}
+}
+@keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+
+.landing-theme{
+  position:absolute;top:28px;right:32px;z-index:2;pointer-events:all;
+}
+

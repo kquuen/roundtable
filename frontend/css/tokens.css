@@ -1,0 +1,59 @@
+<link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,300;0,400;0,600;0,700;1,300&family=Noto+Sans+SC:wght@300;400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════
+   TOKENS
+   ═══════════════════════════════════════ */
+:root {
+  --font-display: 'Crimson Pro', 'Noto Serif SC', serif;
+  --font-body:    'Noto Sans SC', system-ui, sans-serif;
+  --font-mono:    'IBM Plex Mono', monospace;
+  --radius:   8px;
+  --radius-lg:14px;
+  --radius-xl:20px;
+  --ease: cubic-bezier(.4,0,.2,1);
+}
+
+[data-theme="dark"] {
+  --bg:         #0c0e14;
+  --bg-surface: #111420;
+  --bg-card:    #171b2a;
+  --bg-elevated:#1e2236;
+  --bg-hover:   #252a40;
+  --border:     #272d44;
+  --border-bright:#3a4260;
+  --accent:     #c47a5a;
+  --accent-dim: #9e5f42;
+  --accent-soft:rgba(196,122,90,.08);
+  --accent-hot: #da9474;
+  --success:#5ec489; --warning:#e0a84b; --danger:#d46b6b; --info:#6ba3d4;
+  --text-1:#e2dfd8; --text-2:#8a8a92; --text-3:#555660;
+  --text-on-accent:#0c0e14;
+  --landing-bg:#080a10;
+  --glow: radial-gradient(ellipse 600px 400px at 80% 20%, rgba(196,122,90,.06), transparent);
+  --loading-bg:rgba(12,14,20,.88);
+  --scrollbar:#1e2236;
+  --report-border:rgba(39,45,68,.5);
+}
+
+[data-theme="light"] {
+  --bg:         #f4f1eb;
+  --bg-surface: #ece8e0;
+  --bg-card:    #ffffff;
+  --bg-elevated:#f8f5ef;
+  --bg-hover:   #ede9e2;
+  --border:     #d6d2c9;
+  --border-bright:#bfbab0;
+  --accent:     #b56640;
+  --accent-dim: #944f2e;
+  --accent-soft:rgba(181,102,64,.06);
+  --accent-hot: #d4805e;
+  --success:#3a9e62; --warning:#b8892e; --danger:#be4c4c; --info:#4478a8;
+  --text-1:#1a1a1e; --text-2:#6b6b74; --text-3:#a0a0a8;
+  --text-on-accent:#fff;
+  --landing-bg:#f0ece4;
+  --glow: radial-gradient(ellipse 600px 400px at 80% 20%, rgba(181,102,64,.04), transparent);
+  --loading-bg:rgba(244,241,235,.88);
+  --scrollbar:#d6d2c9;
+  --report-border:rgba(214,210,201,.6);
+}
+

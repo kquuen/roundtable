@@ -1,0 +1,129 @@
+/* ═══════════════════════════════════════
+   TRANSITIONS — slide, pop, bamboo scroll
+   ═══════════════════════════════════════ */
+
+/* Pages — directional slide */
+.page{
+  display:none;
+  animation-fill-mode:both;
+  animation-duration:.38s;
+  animation-timing-function:var(--ease);
+}
+.page.active{display:block}
+.page.slide-forward{animation-name:slideLeft}
+.page.slide-back{animation-name:slideRight}
+@keyframes slideLeft{
+  from{opacity:0;transform:translateX(28px)}
+  to{opacity:1;transform:translateX(0)}
+}
+@keyframes slideRight{
+  from{opacity:0;transform:translateX(-28px)}
+  to{opacity:1;transform:translateX(0)}
+}
+
+/* Mode card — click ripple + select */
+.mode-card{transition:all .25s var(--ease),transform .15s var(--ease),box-shadow .25s var(--ease)}
+.mode-card:active{transform:scale(.97)}
+.mode-card.selected{
+  animation:cardPop .35s var(--ease);
+}
+@keyframes cardPop{
+  0%{transform:scale(1)}
+  40%{transform:scale(.97)}
+  70%{transform:scale(1.01)}
+  100%{transform:scale(1)}
+}
+.mode-card.selected::after{
+  animation:checkPop .3s var(--ease) .1s both;
+}
+@keyframes checkPop{
+  from{transform:scale(0);opacity:0}
+  60%{transform:scale(1.2)}
+  to{transform:scale(1);opacity:1}
+}
+
+/* Team card — hover lift + select pulse */
+.team-card{transition:all .25s var(--ease),transform .18s var(--ease)}
+.team-card:active{transform:scale(.97)}
+.team-card.selected{animation:selectPulse .4s var(--ease)}
+@keyframes selectPulse{
+  0%{box-shadow:0 0 0 0 rgba(196,122,90,.3)}
+  50%{box-shadow:0 0 0 8px rgba(196,122,90,0)}
+  100%{box-shadow:none}
+}
+
+/* Step sidebar — active item expand */
+.step-item{transition:all .2s var(--ease),padding-left .25s var(--ease)}
+.step-item.active{padding-left:16px}
+.step-num{transition:all .25s var(--ease),transform .15s var(--ease)}
+.step-item.active .step-num{animation:numPop .3s var(--ease)}
+@keyframes numPop{
+  0%{transform:scale(1)}
+  40%{transform:scale(.85)}
+  70%{transform:scale(1.08)}
+  100%{transform:scale(1)}
+}
+
+/* Buttons — press feedback */
+.btn-primary,.btn-run,.btn-secondary,.btn-ghost{
+  transition:all .2s var(--ease),transform .12s var(--ease);
+}
+.btn-primary:active,.btn-run:active,.btn-secondary:active,.btn-ghost:active{
+  transform:scale(.96);
+}
+
+/* Report sections — stagger reveal */
+.report-body h2{animation:fadeUp .4s var(--ease) both}
+.report-body h2:nth-child(1){animation-delay:0s}
+.report-body h2:nth-child(2){animation-delay:.06s}
+.report-body h2:nth-child(3){animation-delay:.12s}
+.report-body h2:nth-child(4){animation-delay:.18s}
+.report-body h2:nth-child(5){animation-delay:.24s}
+.report-body h2:nth-child(6){animation-delay:.3s}
+.report-body h2:nth-child(7){animation-delay:.36s}
+.report-body h2:nth-child(8){animation-delay:.42s}
+.report-body h2~ul{animation:fadeUp .35s var(--ease) .08s both}
+.report-body h2~blockquote{animation:fadeUp .35s var(--ease) .06s both}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+/* Stats cards — stagger pop */
+.stat-card{animation:statPop .35s var(--ease) both}
+.stat-card:nth-child(1){animation-delay:.1s}
+.stat-card:nth-child(2){animation-delay:.2s}
+.stat-card:nth-child(3){animation-delay:.3s}
+@keyframes statPop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
+
+/* Sidebar step completion — green sweep */
+.step-item.completed .step-num{
+  animation:completeFlash .5s var(--ease);
+}
+@keyframes completeFlash{
+  0%{background:var(--accent);border-color:var(--accent)}
+  50%{background:#7de8a4;border-color:#7de8a4}
+  100%{background:var(--success);border-color:var(--success)}
+}
+
+/* Score bars — fill animation (already handled by JS transition, add overshoot) */
+.score-fill{transition:width .6s cubic-bezier(.34,1.56,.64,1)}
+
+.loading-overlay{
+  position:fixed;inset:0;background:var(--loading-bg);backdrop-filter:blur(6px);
+  display:none;align-items:center;justify-content:center;z-index:1000;flex-direction:column;gap:18px;
+}
+.loading-overlay.show{display:flex}
+.spinner{width:36px;height:36px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:.78rem;color:var(--text-2);font-family:var(--font-mono)}
+
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:3px}
+
+@media(max-width:900px){
+  .sidebar{display:none}.content{padding:22px 16px}
+  .team-grid,.create-grid,.config-grid{grid-template-columns:1fr}
+  .stats-grid{grid-template-columns:1fr}.pipeline{flex-direction:column}
+  .analysis-mode,.debate-columns,.debate-stage-bar,.debate-grid{grid-template-columns:1fr}
+  .report-header{flex-direction:column;align-items:flex-start;gap:10px}
+  .report-meta{flex-wrap:wrap}
+}

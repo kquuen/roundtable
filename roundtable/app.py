@@ -25,7 +25,8 @@ import json as _json
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 
@@ -140,6 +141,14 @@ app.add_middleware(
 )
 
 
+# ── 前端静态文件服务 ──
+
+_FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+if _FRONTEND_DIR.is_dir():
+    # API 路由已定义在前，静态文件作为 fallback
+    pass  # 在所有路由定义之后挂载
+
+
 # ── Request models ──
 
 class CreateSessionRequest(BaseModel):
@@ -162,14 +171,6 @@ class RunRoundtableRequest(BaseModel):
 
 # ── Routes ──
 
-@app.get("/")
-async def root():
-    return {
-        "service": "roundtable",
-        "version": "0.3.0",
-        "llm_enabled": _llm_enabled(),
-        "sessions": _store.session_count(),
-    }
 
 
 @app.post("/session/create", status_code=201)
@@ -990,3 +991,15 @@ async def list_templates():
         ],
         "default_agents": _DEFAULT_AGENTS,
     }
+
+
+# ── 前端 SPA fallback（必须在所有 API 路由之后） ──
+
+if _FRONTEND_DIR.is_dir():
+    @app.get("/", response_class=HTMLResponse)
+    async def serve_frontend():
+        return (_FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+
+    # CSS/JS 静态资源
+    app.mount("/css", StaticFiles(directory=str(_FRONTEND_DIR / "css")), name="css")
+    app.mount("/js", StaticFiles(directory=str(_FRONTEND_DIR / "js")), name="js")
