@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Optional
 
 from roundtable.models import TranscriptChunk
 from roundtable.providers import BaseLLMProvider
@@ -237,18 +236,3 @@ class EvidenceLinker:
                 t for t in re.split(r"[^a-z0-9]+", text)
                 if len(t) >= 2
             ]
-
-
-# ── Convenience function ──
-
-def build_chunk_id_map(
-    evidence_texts: list[str],
-    chunks: list[TranscriptChunk],
-    provider: BaseLLMProvider | None = None,
-) -> list[list[str]]:
-    """One-shot evidence_text → chunk_id mapping.
-
-    Synchronous wrapper that uses keyword fallback (LLM path requires async).
-    """
-    linker = EvidenceLinker(provider=None)  # Always use keyword for sync
-    return linker.link_sync(evidence_texts, chunks)

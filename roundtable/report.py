@@ -360,17 +360,6 @@ def compose_debate_report(
     return "\n".join(lines)
 
 
-def _find_argument_content(debate_session, claim_id: str) -> str:
-    """Find the content text for a claim_id across all rounds."""
-    for rnd in debate_session.rounds:
-        for arg in rnd.arguments:
-            if arg.argument_id and claim_id in arg.argument_id:
-                return arg.content
-            if arg.target_claim_id == claim_id:
-                return arg.content
-    return ""
-
-
 # ══════════════════════════════════════════════
 # 个人圆桌：3+1格式报告
 # ══════════════════════════════════════════════

@@ -284,8 +284,8 @@ class PipelineResult(BaseModel):
     session_id: str
     mode: str = "mock"
     domain_name: str = Field(default="", description="Classified domain")
-    agent_reviews: list = Field(default_factory=list)
-    supervisor_reviews: list = Field(default_factory=list)
+    agent_reviews: list[AgentReview] = Field(default_factory=list)
+    supervisor_reviews: list[SupervisorReview] = Field(default_factory=list)
     report: str = ""
     report_path: str = ""
     memories_written: int = 0

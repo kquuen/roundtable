@@ -69,7 +69,7 @@ class TestMockPipeline:
             agent_count=3,
         )
         # Mock agents produce claims; some FACT claims without evidence should be rejected
-        rejected = [r for r in result.supervisor_reviews if r.get("review_result") == "rejected"]
+        rejected = [r for r in result.supervisor_reviews if r.review_result == "rejected"]
         # At least some claims from mock agents should lack proper evidence binding
         assert len(result.supervisor_reviews) > 0
 

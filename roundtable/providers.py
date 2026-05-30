@@ -17,8 +17,6 @@ import logging
 import os
 import re
 from abc import ABC, abstractmethod
-from typing import Optional
-
 from openai import AsyncOpenAI
 
 try:
@@ -29,6 +27,26 @@ except ImportError:  # pragma: no cover
 from roundtable.models import EvidencePacket, SkillManifest
 
 logger = logging.getLogger("roundtable.providers")
+
+
+async def _retry_chat(call_fn, provider_id: str, model_id: str, max_attempts: int = 3) -> str:
+    """Retry a chat call with exponential backoff."""
+    last_error: str | None = None
+    for attempt in range(max_attempts):
+        try:
+            return await call_fn()
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(
+                "[%s/%s] API call attempt %d/%d failed: %s",
+                provider_id, model_id, attempt + 1, max_attempts, e,
+            )
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(2**attempt)
+    raise RuntimeError(
+        f"{provider_id}/{model_id} API call failed after {max_attempts} attempts. "
+        f"Last error: {last_error}"
+    )
 
 
 # ══════════════════════════════════════════════════════════════
@@ -108,43 +126,22 @@ class OpenAIProvider(BaseLLMProvider):
         max_tokens: int = 2000,
         temperature: float = 0.7,
     ) -> str:
-        last_error: str | None = None
-        for attempt in range(3):
-            try:
-                response = await self._client.chat.completions.create(
-                    model=self.model_id,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message},
-                    ],
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-                content = response.choices[0].message.content
+        async def _call():
+            response = await self._client.chat.completions.create(
+                model=self.model_id,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            content = response.choices[0].message.content
+            if self.budget is not None and response.usage is not None:
+                self.budget.consume(response.usage.total_tokens, "chat")
+            return content or ""
 
-                # TokenBudget tracking
-                if self.budget is not None and response.usage is not None:
-                    self.budget.consume(response.usage.total_tokens, "chat")
-
-                return content or ""
-
-            except Exception as e:
-                last_error = str(e)
-                logger.warning(
-                    "[%s/%s] API call attempt %d/3 failed: %s",
-                    self.provider_id,
-                    self.model_id,
-                    attempt + 1,
-                    e,
-                )
-                if attempt < 2:
-                    await asyncio.sleep(2**attempt)
-                continue
-
-        raise RuntimeError(
-            f"{self.provider_id}/{self.model_id} API call failed after 3 attempts. "
-            f"Last error: {last_error}"
-        )
+        return await _retry_chat(_call, self.provider_id, self.model_id)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -185,51 +182,29 @@ class AnthropicProvider(BaseLLMProvider):
         max_tokens: int = 2000,
         temperature: float = 0.7,
     ) -> str:
-        last_error: str | None = None
-        for attempt in range(3):
-            try:
-                response = await self._client.messages.create(
-                    model=self.model_id,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": user_message}],
-                    max_tokens=max_tokens,
-                    temperature=temperature,
+        async def _call():
+            response = await self._client.messages.create(
+                model=self.model_id,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_message}],
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            text_parts = [
+                block.text for block in response.content
+                if getattr(block, "type", None) == "text"
+            ]
+            result = "\n".join(text_parts)
+            if self.budget is not None:
+                total = (
+                    getattr(response.usage, "input_tokens", 0)
+                    + getattr(response.usage, "output_tokens", 0)
                 )
-                # Extract text from content blocks
-                text_parts = []
-                for block in response.content:
-                    if getattr(block, "type", None) == "text":
-                        text_parts.append(block.text)
-                result = "\n".join(text_parts)
+                if total:
+                    self.budget.consume(total, "chat")
+            return result
 
-                # TokenBudget tracking (input_tokens + output_tokens)
-                if self.budget is not None:
-                    total = (
-                        getattr(response.usage, "input_tokens", 0)
-                        + getattr(response.usage, "output_tokens", 0)
-                    )
-                    if total:
-                        self.budget.consume(total, "chat")
-
-                return result
-
-            except Exception as e:
-                last_error = str(e)
-                logger.warning(
-                    "[%s/%s] API call attempt %d/3 failed: %s",
-                    self.provider_id,
-                    self.model_id,
-                    attempt + 1,
-                    e,
-                )
-                if attempt < 2:
-                    await asyncio.sleep(2**attempt)
-                continue
-
-        raise RuntimeError(
-            f"{self.provider_id}/{self.model_id} API call failed after 3 attempts. "
-            f"Last error: {last_error}"
-        )
+        return await _retry_chat(_call, self.provider_id, self.model_id)
 
 
 # ══════════════════════════════════════════════════════════════

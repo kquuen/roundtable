@@ -13,8 +13,6 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
-
 from roundtable.models import Session, SessionStatus, SessionMode, AgentReview, SupervisorReview
 
 logger = logging.getLogger("roundtable.store")
@@ -48,6 +46,7 @@ class SessionStore:
         self._agent_reviews: dict[str, list[dict]] = {}
         self._supervisor_reviews: dict[str, list[dict]] = {}
         self._locks: dict[str, threading.Lock] = {}
+        self._locks_lock = threading.Lock()
         self._index_lock = threading.Lock()
         self._load_all()
 
@@ -125,7 +124,8 @@ class SessionStore:
             "supervisor_reviews": self._supervisor_reviews.get(session_id, []),
         }
 
-        lock = self._locks.setdefault(session_id, threading.Lock())
+        with self._locks_lock:
+            lock = self._locks.setdefault(session_id, threading.Lock())
         with lock:
             path = self._session_path(session_id)
             path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -241,6 +241,8 @@ class ReportStore:
 
     def get(self, filename: str) -> str | None:
         """Read a specific report by filename."""
+        if ".." in filename or "/" in filename or "\\" in filename:
+            return None
         path = self.base_dir / filename
         if path.exists():
             return path.read_text(encoding="utf-8")

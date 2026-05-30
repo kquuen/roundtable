@@ -14,7 +14,6 @@ import logging
 import os
 import uuid
 from enum import Enum
-from typing import Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -29,7 +28,6 @@ from roundtable.voice.protocol import (
     CloseMessage,
     ReadyMessage,
     StatusMessage,
-    TranscriptPartialMessage,
     TranscriptFinalMessage,
     AIResponseMessage,
     ErrorMessage,
@@ -87,7 +85,7 @@ class VoiceSession:
         self._llm_lock = asyncio.Lock()  # Prevent concurrent LLM calls
 
         # Timeout tracking
-        self._last_activity = asyncio.get_event_loop().time()
+        self._last_activity = asyncio.get_running_loop().time()
 
     def _get_provider(self):
         """Return the effective provider for this session."""
@@ -161,7 +159,7 @@ class VoiceSession:
                 logger.warning("[%s] Failed to receive JSON: %s", self.session_id, e)
                 continue
 
-            self._last_activity = asyncio.get_event_loop().time()
+            self._last_activity = asyncio.get_running_loop().time()
 
             try:
                 msg = parse_frontend_message(raw)
@@ -361,7 +359,7 @@ class VoiceSession:
         timeout_seconds = MAX_SESSION_MINUTES * 60
         while not self._closed:
             await asyncio.sleep(30)
-            elapsed = asyncio.get_event_loop().time() - self._last_activity
+            elapsed = asyncio.get_running_loop().time() - self._last_activity
             if elapsed > timeout_seconds:
                 logger.info("[%s] Session timeout after %ds", self.session_id, int(elapsed))
                 await self._send(ErrorMessage(message="Session timeout due to inactivity"))

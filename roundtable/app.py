@@ -14,7 +14,6 @@ import os
 from contextlib import asynccontextmanager
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
-from typing import Optional
 
 try:
     __version__ = version("roundtable")
@@ -125,7 +124,7 @@ _allowed_origins = os.getenv(
     "http://localhost:3000,http://localhost:5173",
 ).split(",")
 
-if "*" in _allowed_origins and True:  # allow_credentials=True below
+if "*" in _allowed_origins:  # allow_credentials=True below
     logger.warning(
         "CORS: allow_origins='*' is incompatible with allow_credentials=True. "
         "Browsers will reject credentialed requests from cross-origin pages. "
@@ -972,7 +971,6 @@ async def stream_debate_events(session_id: str):
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
-            "Access-Control-Allow-Origin": "*",
         },
     )
 

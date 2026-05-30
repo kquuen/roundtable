@@ -5,6 +5,7 @@ function selectMode(m,el){state.mode=m;document.querySelectorAll('.mode-card').f
 async function createSession(){
   const t=document.getElementById('sessionTitle').value.trim();
   if(!t){document.getElementById('sessionTitle').style.borderColor='var(--danger)';return}
+  if(t.length>200){showToast('Title too long (max 200 chars)','error');return}
   showLoading('Creating session...');
   try{
     const r=await fetch(API+'/session/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,mode:state.mode})});

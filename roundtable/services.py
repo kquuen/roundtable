@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
 
 from roundtable.models import PipelineResult, ReviewResult
 from roundtable.evidence import build_evidence_packet

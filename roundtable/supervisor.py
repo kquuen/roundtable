@@ -9,8 +9,6 @@ import asyncio
 import json
 import logging
 import re
-from typing import Optional
-
 from roundtable.models import (
     AgentReview, ClaimType, EvidenceClaim, EvidencePacket,
     SupervisorReview, ReviewResult, BoundaryClass,
@@ -19,6 +17,33 @@ from roundtable.models import (
 from roundtable.utils import run_async_safely
 
 logger = logging.getLogger("roundtable.supervisor")
+
+
+def _review_all_claims(
+    agent_reviews: list[AgentReview],
+    evidence: EvidencePacket,
+    mode: str,
+    agent_forbidden: dict[str, list[str]] | None,
+) -> list[SupervisorReview]:
+    """Shared claim review loop used by both sync and async entry points."""
+    valid_chunk_ids = {c.chunk_id for c in evidence.transcript_chunks}
+    reviews: list[SupervisorReview] = []
+
+    for ar in agent_reviews:
+        for claim in ar.claims:
+            if claim.lifecycle == ClaimLifecycle.DRAFT:
+                claim.lifecycle = ClaimLifecycle.UNDER_REVIEW
+            r = _review_single_claim(claim, valid_chunk_ids, mode)
+            if r.review_result == ReviewResult.APPROVED and agent_forbidden:
+                forbidden = agent_forbidden.get(ar.agent_id, [])
+                fb_result, boundary = _check_forbidden(claim, forbidden)
+                if fb_result:
+                    r = fb_result
+                elif boundary is not None:
+                    r.boundary_classification = boundary
+            reviews.append(r)
+
+    return reviews
 
 
 def review_claims(
@@ -39,29 +64,9 @@ def review_claims(
     Returns:
         One SupervisorReview per claim
     """
-    valid_chunk_ids = {c.chunk_id for c in evidence.transcript_chunks}
-    reviews: list[SupervisorReview] = []
+    reviews = _review_all_claims(agent_reviews, evidence, mode, agent_forbidden)
 
-    for ar in agent_reviews:
-        for claim in ar.claims:
-            # Lifecycle: claim enters review
-            if claim.lifecycle == ClaimLifecycle.DRAFT:
-                claim.lifecycle = ClaimLifecycle.UNDER_REVIEW
-            # Step 1: Evidence-based review
-            r = _review_single_claim(claim, valid_chunk_ids, mode)
-
-            # Step 2: Forbidden rule check (overrides approval if violated)
-            if r.review_result == ReviewResult.APPROVED and agent_forbidden:
-                forbidden = agent_forbidden.get(ar.agent_id, [])
-                fb_result, boundary = _check_forbidden(claim, forbidden)
-                if fb_result:
-                    r = fb_result
-                elif boundary is not None:
-                    r.boundary_classification = boundary
-
-            reviews.append(r)
-
-    # Step 3: Cross-agent contradiction detection (LLM-based if provider available)
+    # Cross-agent contradiction detection (LLM-based if provider available)
     if provider is not None and len(reviews) >= 2:
         try:
             reviews, _conflict_pairs = run_async_safely(
@@ -87,25 +92,8 @@ async def review_claims_async(
     agent_forbidden: dict[str, list[str]] | None = None,
 ) -> list[SupervisorReview]:
     """异步版本：直接 await 矛盾检测，不再嵌套 asyncio.run()。"""
-    valid_chunk_ids = {c.chunk_id for c in evidence.transcript_chunks}
-    reviews: list[SupervisorReview] = []
+    reviews = _review_all_claims(agent_reviews, evidence, mode, agent_forbidden)
 
-    for ar in agent_reviews:
-        for claim in ar.claims:
-            # Lifecycle: claim enters review
-            if claim.lifecycle == ClaimLifecycle.DRAFT:
-                claim.lifecycle = ClaimLifecycle.UNDER_REVIEW
-            r = _review_single_claim(claim, valid_chunk_ids, mode)
-            if r.review_result == ReviewResult.APPROVED and agent_forbidden:
-                forbidden = agent_forbidden.get(ar.agent_id, [])
-                fb_result, boundary = _check_forbidden(claim, forbidden)
-                if fb_result:
-                    r = fb_result
-                elif boundary is not None:
-                    r.boundary_classification = boundary
-            reviews.append(r)
-
-    # 直接 await，不再 asyncio.run()
     if provider is not None and len(reviews) >= 2:
         try:
             reviews, _conflict_pairs = await _detect_contradictions_async(reviews, agent_reviews, provider)

@@ -95,7 +95,7 @@ class TestLifecycleWiring:
         ar = AgentReview(agent_id="pm", summary="", claims=[claim])
         sr = SupervisorReview(claim_id="c_001", review_result=ReviewResult.NEEDS_USER_CONFIRMATION)
 
-        verdict = UserVerdict("c_001", "confirm")
+        verdict = UserVerdict(claim_id="c_001", decision="confirm")
         from roundtable.feedback import process_user_verdict
         process_user_verdict(verdict, [sr], [ar])
 

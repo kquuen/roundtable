@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Optional, AsyncGenerator
 
 from roundtable.models import (
     DebateArgument, DebateRound, DebateSession,

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Roundtable</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fontsapi.zeoseven.com; font-src 'self' https://fonts.gstatic.com https://fontsapi.zeoseven.com; connect-src 'self' http://localhost:8000 ws://localhost:8000; img-src 'self' data:;">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fontsapi.zeoseven.com/820/main/result.css">
 <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,300;0,400;0,600;0,700;1,300&family=Noto+Sans+SC:wght@300;400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -22,7 +23,7 @@
 <div id="landing">
   <canvas class="taiji-canvas" id="taijiCanvas"></canvas>
   <div class="landing-theme">
-    <button class="icon-btn" onclick="toggleTheme(event)" title="Toggle theme">☀</button>
+    <button class="icon-btn" onclick="toggleTheme(event)" title="Toggle theme" aria-label="Toggle theme">☀</button>
   </div>
   <div class="landing-content">
     <div class="landing-title">Roundtable</div>
@@ -41,21 +42,21 @@
     </div>
     <div class="header-right">
       <div class="status-pill"><span class="status-dot"></span><span id="apiStatus">connecting...</span></div>
-      <button class="icon-btn" onclick="toggleTheme()" title="Toggle theme">☀</button>
+      <button class="icon-btn" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme">☀</button>
       <div class="lang-toggle">
-        <button class="lang-btn active" onclick="setLang('zh')">中</button>
-        <button class="lang-btn" onclick="setLang('en')">EN</button>
+        <button class="lang-btn active" onclick="setLang('zh')" aria-label="Switch to Chinese">中</button>
+        <button class="lang-btn" onclick="setLang('en')" aria-label="Switch to English">EN</button>
       </div>
     </div>
   </header>
 
   <div class="main">
     <nav class="sidebar">
-      <div class="step-item active" data-step="1" onclick="goStep(1)"><span class="step-num">1</span><div><div class="step-label">创建会话</div><div class="step-desc">选择模式，命名</div></div></div>
-      <div class="step-item" data-step="2" onclick="goStep(2)"><span class="step-num">2</span><div><div class="step-label">上传证据</div><div class="step-desc">导入文本片段</div></div></div>
-      <div class="step-item" data-step="3" onclick="goStep(3)"><span class="step-num">3</span><div><div class="step-label">专家团队</div><div class="step-desc">推荐 + 雷达图</div></div></div>
-      <div class="step-item" data-step="4" onclick="goStep(4)"><span class="step-num">4</span><div><div class="step-label">运行分析</div><div class="step-desc">配置参数，启动</div></div></div>
-      <div class="step-item" data-step="5" onclick="goStep(5)"><span class="step-num">5</span><div><div class="step-label">审查报告</div><div class="step-desc">结论与统计</div></div></div>
+      <div class="step-item active" data-step="1" onclick="goStep(1)" role="button" tabindex="0" aria-label="Step 1: Create session"><span class="step-num">1</span><div><div class="step-label">创建会话</div><div class="step-desc">选择模式，命名</div></div></div>
+      <div class="step-item" data-step="2" onclick="goStep(2)" role="button" tabindex="0" aria-label="Step 2: Upload evidence"><span class="step-num">2</span><div><div class="step-label">上传证据</div><div class="step-desc">导入文本片段</div></div></div>
+      <div class="step-item" data-step="3" onclick="goStep(3)" role="button" tabindex="0" aria-label="Step 3: Expert team"><span class="step-num">3</span><div><div class="step-label">专家团队</div><div class="step-desc">推荐 + 雷达图</div></div></div>
+      <div class="step-item" data-step="4" onclick="goStep(4)" role="button" tabindex="0" aria-label="Step 4: Run analysis"><span class="step-num">4</span><div><div class="step-label">运行分析</div><div class="step-desc">配置参数，启动</div></div></div>
+      <div class="step-item" data-step="5" onclick="goStep(5)" role="button" tabindex="0" aria-label="Step 5: Review report"><span class="step-num">5</span><div><div class="step-label">审查报告</div><div class="step-desc">结论与统计</div></div></div>
       <div class="sidebar-footer">
         <div class="session-badge"><span class="session-id" id="sessionId">—</span><span class="session-status" id="sessionStatus">未创建</span></div>
       </div>
@@ -67,13 +68,13 @@
         <h1 class="page-title">创建审查会话</h1>
         <p class="page-subtitle">选择模式并命名。每轮审查独立运行，从证据导入到报告生成。</p>
         <div class="create-grid">
-          <div class="mode-card selected" onclick="selectMode('meeting',this)">
+          <div class="mode-card selected" onclick="selectMode('meeting',this)" role="button" tabindex="0" aria-label="会议审查模式">
             <span class="cloud-corner cloud-tl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 16C4 10 8 6 14 6C10 6 6 10 6 16"/><path d="M6 13C6 8.5 9 5 14 5"/></svg></span>
             <span class="cloud-corner cloud-br"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 16C4 10 8 6 14 6C10 6 6 10 6 16"/><path d="M6 13C6 8.5 9 5 14 5"/></svg></span>
             <div class="mode-name">会议审查</div>
             <div class="mode-desc">多人会议记录导入，多视角协作分析，生成结构化审查报告。</div>
           </div>
-          <div class="mode-card" onclick="selectMode('personal_roundtable',this)">
+          <div class="mode-card" onclick="selectMode('personal_roundtable',this)" role="button" tabindex="0" aria-label="个人圆桌模式">
             <span class="cloud-corner cloud-tl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 16C4 10 8 6 14 6C10 6 6 10 6 16"/><path d="M6 13C6 8.5 9 5 14 5"/></svg></span>
             <span class="cloud-corner cloud-br"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 16C4 10 8 6 14 6C10 6 6 10 6 16"/><path d="M6 13C6 8.5 9 5 14 5"/></svg></span>
             <div class="mode-name">个人圆桌</div>
@@ -81,7 +82,7 @@
           </div>
         </div>
         <div class="input-group">
-          <label class="input-label">会话标题</label>
+          <label class="input-label" for="sessionTitle">会话标题</label>
           <input type="text" class="input-field" id="sessionTitle" placeholder="例：Q3 产品规划讨论" autocomplete="off">
         </div>
         <div class="nav-buttons"><button class="btn-primary" onclick="createSession()">创建会话 →</button></div>
@@ -94,10 +95,10 @@
         <div class="voice-priority">
           <div class="voice-title">语音输入（推荐）</div>
           <div class="voice-desc">上传会议录音后将调用 Whisper 转写，自动生成结构化 segments，并直接写入当前会话。</div>
-          <div class="voice-drop" id="voiceDrop" onclick="document.getElementById('audioInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleAudioDrop(event)">
+          <div class="voice-drop" id="voiceDrop" onclick="document.getElementById('audioInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleAudioDrop(event)" role="button" tabindex="0" aria-label="Upload audio file">
             <div class="voice-file" id="audioFileName">未选择音频文件</div>
             <div class="voice-limit">支持 mp3 / wav / m4a / ogg / webm，最大 25MB（点击或拖拽上传）</div>
-            <input type="file" id="audioInput" accept=".mp3,.wav,.m4a,.ogg,.webm" style="display:none" onchange="handleAudioSelect(event)">
+            <input type="file" id="audioInput" accept=".mp3,.wav,.m4a,.ogg,.webm" style="display:none" onchange="handleAudioSelect(event)" aria-label="Select audio file">
           </div>
           <div class="voice-ops">
             <button class="btn-primary" onclick="uploadAudioEvidence()">语音转写并写入证据</button>
@@ -105,20 +106,21 @@
           </div>
         </div>
         <div class="text-advanced collapsed" id="textAdvanced">
-          <button class="text-advanced-toggle" onclick="toggleTextAdvanced()">
+          <button class="text-advanced-toggle" onclick="toggleTextAdvanced()" aria-expanded="false">
             <span>文本 JSON 输入（高级）</span>
             <span class="toggle-arrow">▼</span>
           </button>
           <div class="text-advanced-body">
-            <div class="drop-zone" id="jsonDrop" onclick="document.getElementById('fileInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleJsonDrop(event)" style="margin-bottom:14px">
+            <div class="drop-zone" id="jsonDrop" onclick="document.getElementById('fileInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleJsonDrop(event)" style="margin-bottom:14px" role="button" tabindex="0" aria-label="Upload JSON file">
               <div class="drop-zone-icon"> </div>
               <div class="drop-zone-text">拖拽 JSON 文件到此处，或点击上传</div>
               <div class="drop-zone-hint">{"segments": [{"speaker": "姓名", "text": "内容"}]}</div>
-              <input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFileUpload(event)">
+              <input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFileUpload(event)" aria-label="Select JSON file">
             </div>
             <div class="card">
               <div class="card-header"><span class="card-title">手动输入</span><span class="card-tag">JSON</span></div>
               <div class="editor-area">
+                <label for="transcriptEditor" class="sr-only">Transcript editor</label>
                 <textarea class="transcript-editor" id="transcriptEditor" placeholder='[
   {"speaker": "张三", "text": "我们决定先做文本导入功能"},
   {"speaker": "李四", "text": "技术上用 FastAPI 加 Celery"}
@@ -176,7 +178,8 @@
           <div class="config-card">
             <div class="config-label">Agent 数量</div>
             <div class="slider-wrap">
-              <input type="range" class="slider" id="agentCount" min="1" max="5" value="5" oninput="document.getElementById('agentVal').textContent=this.value">
+              <label for="agentCount" class="sr-only">Agent count</label>
+              <input type="range" class="slider" id="agentCount" min="1" max="5" value="5" oninput="document.getElementById('agentVal').textContent=this.value" aria-label="Number of agents">
               <span class="slider-val" id="agentVal">5</span>
             </div>
           </div>
@@ -228,14 +231,14 @@
               <button class="btn-ghost" onclick="downloadReport()">Download .md</button>
             </div>
           </div>
-          <div class="report-tabs">
-            <button class="report-tab active" id="tab-report" onclick="showReportPanel('report',this)">最终报告</button>
-            <button class="report-tab" id="tab-debate" onclick="showReportPanel('debate',this)">辩论剧场</button>
+          <div class="report-tabs" role="tablist">
+            <button class="report-tab active" id="tab-report" onclick="showReportPanel('report',this)" role="tab" aria-selected="true">最终报告</button>
+            <button class="report-tab" id="tab-debate" onclick="showReportPanel('debate',this)" role="tab" aria-selected="false">辩论剧场</button>
           </div>
-          <div class="report-panel active" id="panel-report">
+          <div class="report-panel active" id="panel-report" role="tabpanel">
             <div class="report-body" id="reportBody"></div>
           </div>
-          <div class="report-panel" id="panel-debate">
+          <div class="report-panel" id="panel-debate" role="tabpanel">
             <div class="debate-stage-bar" id="debateStageBar"></div>
             <div class="debate-grid">
               <div class="debate-board">
@@ -270,7 +273,7 @@
   </div>
 </div>
 
-<div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-text" id="loadingText">Processing...</div></div>
+<div class="loading-overlay" id="loadingOverlay" role="alert" aria-live="polite"><div class="spinner"></div><div class="loading-text" id="loadingText">Processing...</div></div>
 
 <script src="js/config.js"></script>
 <script src="js/state.js"></script>

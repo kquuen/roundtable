@@ -103,14 +103,6 @@ def classify_session(
     return _classify_with_keywords(evidence)
 
 
-async def classify_session_async(
-    evidence: EvidencePacket,
-    provider: BaseLLMProvider,
-) -> str:
-    """Async classification — always uses LLM."""
-    return await _classify_with_llm(evidence, provider)
-
-
 # ── LLM-based classification ──
 
 async def _classify_with_llm(

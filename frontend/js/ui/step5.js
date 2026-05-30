@@ -2,7 +2,7 @@
    STEP 5 — Report & Debate Theater
    ═══════════════════════════════════════════ */
 function renderReport(md){
-  const body=document.getElementById('reportBody');let h=md;
+  const body=document.getElementById('reportBody');let h=escHtml(md);
   const icons={'摘要':'S','会议事实':'F','推断与判断':'J','专家建议':'R','创意延展':'E','已降级':'W','已驳回':'X','待用户确认':'?','待解决问题':'Q','下一步行动':'A','审查统计':'N'};
   h=h.replace(/^# (.+)$/gm,'<h1>$1</h1>');
   h=h.replace(/^> \*\*(.+)\*\*$/gm,'<blockquote><strong>$1</strong></blockquote>');

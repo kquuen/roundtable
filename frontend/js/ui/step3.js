@@ -5,10 +5,10 @@ function renderTeams(data){
   document.getElementById('sessionTypeText').textContent=data.session_type;
   const g=document.getElementById('teamGrid');g.innerHTML='';
   data.recommended_teams.forEach((team,i)=>{
-    const c=document.createElement('div');c.className='team-card'+(i===0?' recommended selected':'');
+    const c=document.createElement('div');c.className='team-card'+(i===0?' recommended selected':'');c.setAttribute('role','button');c.setAttribute('tabindex','0');c.setAttribute('aria-label','Select team: '+escHtml(team.name));
     if(i===0)state.selectedTeam=team.team_id;
     const rid='radar-'+team.team_id;
-    c.innerHTML='<span class="cloud-corner cloud-tl">'+CLOUD_SVG+'</span><span class="cloud-corner cloud-br">'+CLOUD_SVG+'</span><div class="team-name">'+team.name+'</div><div class="team-id">'+team.team_id+'</div><div class="radar-wrap"><canvas id="'+rid+'"></canvas></div><div class="score-list">'+Object.entries(team.capability_scores).map(function(e){return'<div class="score-row"><span class="score-label">'+e[0]+'</span><div class="score-bar"><div class="score-fill" style="width:'+e[1]+'%"></div></div><span class="score-val">'+e[1]+'</span></div>'}).join('')+'</div>';
+    c.innerHTML='<span class="cloud-corner cloud-tl">'+CLOUD_SVG+'</span><span class="cloud-corner cloud-br">'+CLOUD_SVG+'</span><div class="team-name">'+escHtml(team.name)+'</div><div class="team-id">'+escHtml(team.team_id)+'</div><div class="radar-wrap"><canvas id="'+rid+'"></canvas></div><div class="score-list">'+Object.entries(team.capability_scores).map(function(e){return'<div class="score-row"><span class="score-label">'+escHtml(e[0])+'</span><div class="score-bar"><div class="score-fill" style="width:'+e[1]+'%"></div></div><span class="score-val">'+e[1]+'</span></div>'}).join('')+'</div>';
     c.onclick=function(){document.querySelectorAll('.team-card').forEach(function(x){x.classList.remove('selected')});c.classList.add('selected');state.selectedTeam=team.team_id};
     g.appendChild(c);requestAnimationFrame(function(){drawRadar(rid,team.capability_scores)});
   });

@@ -31,3 +31,7 @@
   border-color:rgba(94,196,137,.35);
   color:var(--success);
 }
+.toast-warning{
+  border-color:rgba(234,179,8,.35);
+  color:var(--warning);
+}

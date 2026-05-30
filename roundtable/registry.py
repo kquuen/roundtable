@@ -8,7 +8,7 @@ Replaces hardcoded agent imports in orchestrator.py, enabling:
 
 from __future__ import annotations
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from roundtable.agents import Agent
@@ -99,9 +99,3 @@ def _init_builtin_agents(registry: AgentRegistry) -> None:
     registry.register(ProjectManager)
     registry.register(BusinessAnalyst)
     registry.register(SupervisorAgent)
-
-
-def reset_registry() -> None:
-    """Reset the global registry (for testing)."""
-    global _registry
-    _registry = None

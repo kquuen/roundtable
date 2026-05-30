@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+
+from pydantic import BaseModel, field_validator, model_validator
 
 from roundtable.models import (
     AgentReview, EvidenceClaim, SupervisorReview,
@@ -22,34 +23,30 @@ logger = logging.getLogger("roundtable.feedback")
 
 # ── 用户裁决 ──
 
-class UserVerdict:
+class UserVerdict(BaseModel):
     """用户对一条 claim 的裁决结果。"""
 
-    def __init__(
-        self,
-        claim_id: str,
-        decision: str,  # "confirm" | "reject" | "retype"
-        new_type: str | None = None,
-        note: str = "",
-    ):
-        self.claim_id = claim_id
-        self.decision = decision
-        self.new_type = new_type
-        self.note = note
+    claim_id: str
+    decision: str  # "confirm" | "reject" | "retype"
+    new_type: str | None = None
+    note: str = ""
+
+    @field_validator("decision")
+    @classmethod
+    def _validate_decision(cls, v: str) -> str:
+        if v not in ("confirm", "reject", "retype"):
+            raise ValueError(f"Invalid decision '{v}': must be confirm/reject/retype")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_retype(self) -> "UserVerdict":
+        if self.decision == "retype" and not self.new_type:
+            raise ValueError("retype requires new_type")
+        return self
 
     @classmethod
     def from_dict(cls, data: dict) -> UserVerdict:
-        decision = data.get("decision", "")
-        if decision not in ("confirm", "reject", "retype"):
-            raise ValueError(f"Invalid decision '{decision}': must be confirm/reject/retype")
-        if decision == "retype" and not data.get("new_type"):
-            raise ValueError("retype requires new_type")
-        return cls(
-            claim_id=data.get("claim_id", ""),
-            decision=decision,
-            new_type=data.get("new_type"),
-            note=data.get("note", ""),
-        )
+        return cls(**data)
 
 
 def process_user_verdict(
@@ -137,21 +134,16 @@ def apply_bulk_verdicts(
 
 # ── 用户纠正 ──
 
-class UserCorrection:
+class UserCorrection(BaseModel):
     """用户对系统推断的纠正。"""
 
-    def __init__(self, target: str, correction: str, reason: str = ""):
-        self.target = target       # 被纠正的推断描述
-        self.correction = correction  # 用户正确的版本
-        self.reason = reason
+    target: str = ""
+    correction: str = ""
+    reason: str = ""
 
     @classmethod
     def from_dict(cls, data: dict) -> UserCorrection:
-        return cls(
-            target=data.get("target", ""),
-            correction=data.get("correction", ""),
-            reason=data.get("reason", ""),
-        )
+        return cls(**data)
 
 
 def process_user_correction(correction: UserCorrection) -> dict:

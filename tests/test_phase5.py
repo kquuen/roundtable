@@ -128,7 +128,7 @@ class TestProcessUserVerdict:
         ar = AgentReview(agent_id="pm", summary="", claims=[claim])
         sr = SupervisorReview(claim_id="c_001", review_result=ReviewResult.NEEDS_USER_CONFIRMATION, reason="矛盾")
 
-        verdict = UserVerdict("c_001", "confirm")
+        verdict = UserVerdict(claim_id="c_001", decision="confirm")
         result = process_user_verdict(verdict, [sr], [ar])
 
         assert result["updated"] is True
@@ -140,7 +140,7 @@ class TestProcessUserVerdict:
         ar = AgentReview(agent_id="architect", summary="", claims=[claim])
         sr = SupervisorReview(claim_id="c_002", review_result=ReviewResult.NEEDS_USER_CONFIRMATION, reason="模糊")
 
-        verdict = UserVerdict("c_002", "reject", note="可以忽略")
+        verdict = UserVerdict(claim_id="c_002", decision="reject", note="可以忽略")
         result = process_user_verdict(verdict, [sr], [ar])
 
         assert result["updated"] is True
@@ -150,7 +150,7 @@ class TestProcessUserVerdict:
 
     def test_unknown_claim_id(self):
         sr = SupervisorReview(claim_id="c_001", review_result=ReviewResult.NEEDS_USER_CONFIRMATION)
-        verdict = UserVerdict("c_999", "confirm")
+        verdict = UserVerdict(claim_id="c_999", decision="confirm")
         result = process_user_verdict(verdict, [sr], [])
         assert result["updated"] is False
         assert "claim not found" in result["error"]
@@ -168,8 +168,8 @@ class TestApplyBulkVerdicts:
             SupervisorReview(claim_id="c_2", review_result=ReviewResult.NEEDS_USER_CONFIRMATION),
         ]
         verdicts = [
-            UserVerdict("c_1", "confirm"),
-            UserVerdict("c_2", "reject"),
+            UserVerdict(claim_id="c_1", decision="confirm"),
+            UserVerdict(claim_id="c_2", decision="reject"),
         ]
         result = apply_bulk_verdicts(verdicts, srs, [ar])
         assert result["applied"] == 2
@@ -191,7 +191,7 @@ class TestUserCorrection:
         assert "预算" in c.correction
 
     def test_process_records(self):
-        c = UserCorrection("推断A", "更正A", "")
+        c = UserCorrection(target="推断A", correction="更正A", reason="")
         result = process_user_correction(c)
         assert result["recorded"] is True
         assert result["target"] == "推断A"
@@ -324,7 +324,7 @@ class TestReportTags:
         from roundtable.report import compose_report
         claims = [
             EvidenceClaim(claim_id="c_1", agent_id="pm", content="边界模糊的架构观点",
-                         claim_type=ClaimType.INFERENCE, lifecyle=ClaimLifecycle.DRAFT),
+                         claim_type=ClaimType.INFERENCE, lifecycle=ClaimLifecycle.DRAFT),
         ]
         ar = AgentReview(agent_id="pm", summary="测试", claims=claims)
         srs = [
@@ -343,7 +343,7 @@ class TestReportTags:
 
 class TestFeedbackModule:
     def test_process_user_correction_returns_structured(self):
-        corr = UserCorrection("推断A", "更正A", "理由")
+        corr = UserCorrection(target="推断A", correction="更正A", reason="理由")
         result = process_user_correction(corr)
         assert result["recorded"] is True
         assert "timestamp" in result
@@ -379,6 +379,6 @@ class TestEdgeCases:
 
     def test_verdict_for_nonexistent_claim(self):
         sr = SupervisorReview(claim_id="c_001", review_result=ReviewResult.APPROVED)
-        verdict = UserVerdict("c_999", "confirm")
+        verdict = UserVerdict(claim_id="c_999", decision="confirm")
         result = process_user_verdict(verdict, [sr], [])
         assert result["updated"] is False

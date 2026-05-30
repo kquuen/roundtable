@@ -7,9 +7,7 @@ from config, and mock mode for testing.
 
 from __future__ import annotations
 
-import asyncio
-from typing import Optional
-
+import logging
 from roundtable.models import (
     AgentReview, EvidenceClaim, EvidencePacket, ClaimType, SkillManifest,
     ClaimLifecycle,
@@ -21,6 +19,8 @@ from roundtable.providers import (
 from roundtable.skills import load_skill
 from roundtable.linker import EvidenceLinker
 from roundtable.utils import run_async_safely
+
+logger = logging.getLogger(__name__)
 
 
 class Agent:
@@ -58,11 +58,72 @@ class Agent:
             model_ref = ConfigManager.get().get_agent_model(self.skill.skill_id)
             if model_ref:
                 return ProviderRouter.get_instance().get(model_ref)
-        except Exception:
+        except Exception as e:
             # Config not loaded, model not found, or API key missing —
             # degrade gracefully to mock mode
-            pass
+            logger.debug(
+                "Provider resolution failed for %s, falling back to mock: %s",
+                self.skill.skill_id, e,
+            )
         return None
+
+    def _keyword_scan_mock(
+        self,
+        evidence: EvidencePacket,
+        keywords: list[str],
+        claim_prefix: str,
+        claim_type: ClaimType = ClaimType.FACT,
+        content_template: str = "{kw} - {text}",
+        fallback_content: str = "",
+        recommendation_content: str = "",
+        confidence: float = 0.85,
+        open_questions: list[str] | None = None,
+        recommended_next_actions: list[str] | None = None,
+    ) -> AgentReview:
+        """Common mock analysis: scan chunks for keywords, add fallback + recommendation."""
+        chunks = evidence.transcript_chunks
+        claims: list[EvidenceClaim] = []
+
+        for c in chunks:
+            for kw in keywords:
+                if kw in c.text.lower():
+                    claims.append(EvidenceClaim(
+                        claim_id=f"{claim_prefix}_{len(claims):03d}",
+                        agent_id=self.agent_id,
+                        claim_type=claim_type,
+                        content=content_template.format(kw=kw, text=c.text[:80]),
+                        evidence_ids=[c.chunk_id],
+                        confidence=confidence,
+                    ))
+                    break
+
+        if not claims and chunks and fallback_content:
+            claims.append(EvidenceClaim(
+                claim_id=f"{claim_prefix}_000",
+                agent_id=self.agent_id,
+                claim_type=ClaimType.INFERENCE,
+                content=fallback_content.format(text=chunks[0].text[:80]),
+                evidence_ids=[chunks[0].chunk_id],
+                confidence=0.65,
+            ))
+
+        if claims and recommendation_content:
+            claims.append(EvidenceClaim(
+                claim_id=f"{claim_prefix}_{len(claims):03d}",
+                agent_id=self.agent_id,
+                claim_type=ClaimType.RECOMMENDATION,
+                content=recommendation_content,
+                evidence_ids=list(claims[0].evidence_ids),
+                confidence=0.78,
+            ))
+
+        return AgentReview(
+            agent_id=self.agent_id,
+            summary=f"从讨论中识别出 {len(claims)} 个信号。",
+            claims=claims,
+            open_questions=open_questions or [],
+            recommended_next_actions=recommended_next_actions or [],
+        )
 
     def analyze(
         self,
@@ -274,49 +335,14 @@ class ProductManager(Agent):
         super().__init__("product_manager", provider=provider)
 
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
-        chunks = evidence.transcript_chunks
-        claims = []
-        # Bilingual keywords: Chinese + English
-        decision_keywords = [
-            "决定", "确定", "先做", "不做", "只做", "改为", "优先",
-            "decide", "priority", "mvp", "scope", "defer", "only", "first",
-        ]
-        for c in chunks:
-            for kw in decision_keywords:
-                if kw in c.text.lower():
-                    claims.append(EvidenceClaim(
-                        claim_id=f"c_pm_{len(claims):03d}",
-                        agent_id=self.agent_id,
-                        claim_type=ClaimType.FACT,
-                        content=f"Product decision detected: {c.text[:80]}",
-                        evidence_ids=[c.chunk_id],
-                        confidence=0.90,
-                    ))
-                    break
-        # Fallback: always extract at least one signal from input
-        if not claims and chunks:
-            topics = [c.text[:50] for c in chunks[:3]]
-            claims.append(EvidenceClaim(
-                claim_id="c_pm_000",
-                agent_id=self.agent_id,
-                claim_type=ClaimType.INFERENCE,
-                content=f"Discussion topics identified: {'; '.join(topics)}",
-                evidence_ids=[chunks[0].chunk_id],
-                confidence=0.65,
-            ))
-        if claims:
-            claims.append(EvidenceClaim(
-                claim_id=f"c_pm_{len(claims):03d}",
-                agent_id=self.agent_id,
-                claim_type=ClaimType.RECOMMENDATION,
-                content="根据讨论内容，建议优先聚焦 MVP 核心范围，将非关键特性推迟到后续阶段。",
-                evidence_ids=list(claims[0].evidence_ids),
-                confidence=0.78,
-            ))
-        return AgentReview(
-            agent_id=self.agent_id,
-            summary=f"从会议中识别出 {len(claims)} 个产品信号。",
-            claims=claims,
+        return self._keyword_scan_mock(
+            evidence,
+            keywords=["决定", "确定", "先做", "不做", "只做", "改为", "优先",
+                       "decide", "priority", "mvp", "scope", "defer", "only", "first"],
+            claim_prefix="c_pm",
+            confidence=0.90,
+            fallback_content="Discussion topics identified: {text}",
+            recommendation_content="根据讨论内容，建议优先聚焦 MVP 核心范围，将非关键特性推迟到后续阶段。",
             open_questions=["MVP 优先级是否与用户需求对齐？"],
             recommended_next_actions=["与利益相关方确认 MVP 范围。"],
         )
@@ -329,47 +355,14 @@ class Architect(Agent):
         super().__init__("architect", provider=provider)
 
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
-        chunks = evidence.transcript_chunks
-        claims = []
-        tech_keywords = [
-            "协议", "后端", "前端", "数据库", "API", "并发", "成本", "token", "Agent",
-            "protocol", "backend", "frontend", "database", "concurrency", "cost", "architecture",
-        ]
-        for c in chunks:
-            for kw in tech_keywords:
-                if kw in c.text.lower():
-                    claims.append(EvidenceClaim(
-                        claim_id=f"c_arch_{len(claims):03d}",
-                        agent_id=self.agent_id,
-                        claim_type=ClaimType.INFERENCE if kw.lower() == "agent" else ClaimType.FACT,
-                        content=f"Technical concern: {kw} - {c.text[:60]}",
-                        evidence_ids=[c.chunk_id],
-                        confidence=0.85,
-                    ))
-                    break
-        # Fallback: always extract at least one signal
-        if not claims and chunks:
-            claims.append(EvidenceClaim(
-                claim_id="c_arch_000",
-                agent_id=self.agent_id,
-                claim_type=ClaimType.INFERENCE,
-                content=f"Technical context from input: {chunks[0].text[:80]}",
-                evidence_ids=[chunks[0].chunk_id],
-                confidence=0.60,
-            ))
-        if claims:
-            claims.append(EvidenceClaim(
-                claim_id=f"c_arch_{len(claims):03d}",
-                agent_id=self.agent_id,
-                claim_type=ClaimType.RECOMMENDATION,
-                content="建议先锁定核心协议定义，再逐步扩展到完整的技能注册体系。",
-                evidence_ids=[],
-                confidence=0.80,
-            ))
-        return AgentReview(
-            agent_id=self.agent_id,
-            summary=f"发现 {len(claims)} 个技术信号，已给出架构建议。",
-            claims=claims,
+        return self._keyword_scan_mock(
+            evidence,
+            keywords=["协议", "后端", "前端", "数据库", "API", "并发", "成本", "token", "Agent",
+                       "protocol", "backend", "frontend", "database", "concurrency", "cost", "architecture"],
+            claim_prefix="c_arch",
+            content_template="Technical concern: {kw} - {text}",
+            fallback_content="Technical context from input: {text}",
+            recommendation_content="建议先锁定核心协议定义，再逐步扩展到完整的技能注册体系。",
             open_questions=["Agent 并发调度的上限是多少？"],
             recommended_next_actions=["锁定 TranscriptChunk 和 EvidenceClaim 协议。"],
         )
@@ -382,42 +375,28 @@ class ProjectManager(Agent):
         super().__init__("project_manager", provider=provider)
 
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
-        chunks = evidence.transcript_chunks
-        claims = []
-        # Detect timeline/scheduling signals
-        timeline_kw = [
-            "周", "天", "月", "排期", "交付", "上线", "发布", "里程碑",
-            "week", "sprint", "phase", "deliver", "milestone", "timeline", "launch",
-        ]
-        for c in chunks:
-            for kw in timeline_kw:
-                if kw in c.text.lower():
-                    claims.append(EvidenceClaim(
-                        claim_id=f"c_pjm_{len(claims):03d}",
-                        agent_id=self.agent_id,
-                        claim_type=ClaimType.FACT,
-                        content=f"时间线信号：{c.text[:80]}",
-                        evidence_ids=[c.chunk_id],
-                        confidence=0.80,
-                    ))
-                    break
-        # Always add execution recommendation based on input
-        if chunks:
-            claims.append(EvidenceClaim(
-                claim_id=f"c_pjm_{len(claims):03d}",
+        review = self._keyword_scan_mock(
+            evidence,
+            keywords=["周", "天", "月", "排期", "交付", "上线", "发布", "里程碑",
+                       "week", "sprint", "phase", "deliver", "milestone", "timeline", "launch"],
+            claim_prefix="c_pjm",
+            content_template="时间线信号：{text}",
+            confidence=0.80,
+            open_questions=["团队规模是多少？", "是否有外部依赖？"],
+            recommended_next_actions=["将工作拆分为 2 周冲刺。", "设置每周审查检查点。"],
+        )
+        # Always add execution recommendation
+        if evidence.transcript_chunks:
+            review.claims.append(EvidenceClaim(
+                claim_id=f"c_pjm_{len(review.claims):03d}",
                 agent_id=self.agent_id,
                 claim_type=ClaimType.RECOMMENDATION,
                 content="建议将工作拆分为 2 周冲刺，每个阶段有明确交付物。",
                 evidence_ids=[],
                 confidence=0.75,
             ))
-        return AgentReview(
-            agent_id=self.agent_id,
-            summary=f"从讨论中发现 {len(claims)} 个执行规划信号。",
-            claims=claims,
-            open_questions=["团队规模是多少？", "是否有外部依赖？"],
-            recommended_next_actions=["将工作拆分为 2 周冲刺。", "设置每周审查检查点。"],
-        )
+            review.summary = f"从讨论中发现 {len(review.claims)} 个执行规划信号。"
+        return review
 
 
 class BusinessAnalyst(Agent):
@@ -427,37 +406,14 @@ class BusinessAnalyst(Agent):
         super().__init__("business_analyst", provider=provider)
 
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
-        chunks = evidence.transcript_chunks
-        claims = []
-        biz_kw = [
-            "用户", "市场", "客户", "收入", "付费", "增长", "竞品", "差异化",
-            "user", "market", "customer", "revenue", "pricing", "growth", "competitor", "differentiat",
-        ]
-        for c in chunks:
-            for kw in biz_kw:
-                if kw in c.text.lower():
-                    claims.append(EvidenceClaim(
-                        claim_id=f"c_ba_{len(claims):03d}",
-                        agent_id=self.agent_id,
-                        claim_type=ClaimType.INFERENCE,
-                        content=f"Business signal ({kw}): {c.text[:80]}",
-                        evidence_ids=[c.chunk_id],
-                        confidence=0.72,
-                    ))
-                    break
-        if claims:
-            claims.append(EvidenceClaim(
-                claim_id=f"c_ba_{len(claims):03d}",
-                agent_id=self.agent_id,
-                claim_type=ClaimType.RECOMMENDATION,
-                content="建议瞄准付费意愿最高的早期用户群体，提供结构化分析服务。",
-                evidence_ids=[],
-                confidence=0.70,
-            ))
-        return AgentReview(
-            agent_id=self.agent_id,
-            summary=f"从讨论中识别出 {len(claims)} 个商业信号。",
-            claims=claims,
+        return self._keyword_scan_mock(
+            evidence,
+            keywords=["用户", "市场", "客户", "收入", "付费", "增长", "竞品", "差异化",
+                       "user", "market", "customer", "revenue", "pricing", "growth", "competitor", "differentiat"],
+            claim_prefix="c_ba",
+            claim_type=ClaimType.INFERENCE,
+            content_template="Business signal ({kw}): {text}",
+            recommendation_content="建议瞄准付费意愿最高的早期用户群体，提供结构化分析服务。",
             open_questions=["定价模型是什么？", "竞品响应周期有多长？"],
             recommended_next_actions=["进行 5 次用户访谈。", "验证付费意愿。"],
         )

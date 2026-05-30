@@ -9,7 +9,6 @@ SearchAdapter:
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -113,9 +112,9 @@ class SearchAdapter:
         import httpx
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(
+                resp = await client.post(
                     "https://serpapi.com/search",
-                    params={
+                    data={
                         "q": query,
                         "api_key": self.api_key,
                         "engine": "google",

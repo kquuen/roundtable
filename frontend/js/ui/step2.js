@@ -6,13 +6,15 @@ function updateSegmentCount(){try{const s=JSON.parse(document.getElementById('tr
 document.getElementById('transcriptEditor')?.addEventListener('input',updateSegmentCount);
 async function uploadEvidence(){
   let s;try{s=JSON.parse(document.getElementById('transcriptEditor').value);if(!Array.isArray(s))throw 0}catch{showToast('Invalid JSON array','error');return}
+  if(s.length>500){showToast('Too many segments (max 500)','error');return}
+  if(s.some(function(seg){return !seg.speaker||!seg.text})){showToast('Each segment needs speaker and text','error');return}
   showLoading('Uploading evidence...');
   try{
     await fetch(API+'/evidence/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.sessionId,segments:s})});
     showLoading('Analyzing content...');
     const r=await fetch(API+'/team/recommend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.sessionId,segments:s})});
     renderTeams(await r.json());hideLoading();fetchInterview();
-  }catch(e){hideLoading();alert('Upload failed: '+e.message)}
+  }catch(e){hideLoading();showToast('Upload failed: '+e.message,'error')}
 }
 function handleDragOver(e){e.preventDefault();e.currentTarget.classList.add('drag-over')}
 function handleDragLeave(e){e.currentTarget.classList.remove('drag-over')}

@@ -5,6 +5,8 @@
   const toastEl = document.createElement('div');
   toastEl.id = 'toast';
   toastEl.className = 'toast';
+  toastEl.setAttribute('role', 'alert');
+  toastEl.setAttribute('aria-live', 'assertive');
   document.body.appendChild(toastEl);
 })();
 
