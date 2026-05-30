@@ -20,7 +20,7 @@ import re
 from typing import Optional
 
 from roundtable.models import TranscriptChunk
-from roundtable.providers import ProviderAdapter
+from roundtable.providers import BaseLLMProvider
 
 logger = logging.getLogger("roundtable.linker")
 
@@ -33,7 +33,7 @@ class EvidenceLinker:
     overlap as fallback.
     """
 
-    def __init__(self, provider: ProviderAdapter | None = None):
+    def __init__(self, provider: BaseLLMProvider | None = None):
         self.provider = provider
 
     async def link(
@@ -244,7 +244,7 @@ class EvidenceLinker:
 def build_chunk_id_map(
     evidence_texts: list[str],
     chunks: list[TranscriptChunk],
-    provider: ProviderAdapter | None = None,
+    provider: BaseLLMProvider | None = None,
 ) -> list[list[str]]:
     """One-shot evidence_text → chunk_id mapping.
 

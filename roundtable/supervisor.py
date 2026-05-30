@@ -25,7 +25,7 @@ def review_claims(
     agent_reviews: list[AgentReview],
     evidence: EvidencePacket,
     mode: str = "meeting",
-    provider=None,  # Optional[ProviderAdapter] for LLM-based checks
+    provider=None,  # Optional[BaseLLMProvider] for LLM-based checks
     agent_forbidden: dict[str, list[str]] | None = None,
 ) -> list[SupervisorReview]:
     """审查所有 claim，按证据绑定规则 + forbidden 规则做裁决。

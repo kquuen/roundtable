@@ -1,0 +1,108 @@
+# Roundtable 产品级提供商配置
+# 部署时由运维注入 API Key（通过 ${ENV_VAR} 环境变量替换）
+# 用户无感知，开箱即用
+
+providers:
+  # ── LLM 提供商 ──
+
+  deepseek:
+    name: "DeepSeek"
+    protocol: openai
+    base_url: https://api.deepseek.com/v1
+    api_key: ${DEEPSEEK_API_KEY}
+    timeout: 60
+    models:
+      - id: deepseek-chat
+        name: "DeepSeek-V3"
+        context_window: 64000
+        max_tokens: 8192
+      - id: deepseek-reasoner
+        name: "DeepSeek-R1"
+        context_window: 64000
+        max_tokens: 8192
+        reasoning: true
+
+  anthropic:
+    name: "Anthropic Claude"
+    protocol: anthropic
+    base_url: https://api.anthropic.com/v1
+    api_key: ${ANTHROPIC_API_KEY}
+    timeout: 60
+    models:
+      - id: claude-sonnet-4-20250514
+        name: "Claude Sonnet 4"
+        context_window: 200000
+        max_tokens: 8192
+      - id: claude-opus-4-20250514
+        name: "Claude Opus 4"
+        context_window: 200000
+        max_tokens: 8192
+
+  openai:
+    name: "OpenAI"
+    protocol: openai
+    base_url: https://api.openai.com/v1
+    api_key: ${OPENAI_API_KEY}
+    timeout: 60
+    models:
+      - id: gpt-4o
+        name: "GPT-4o"
+        context_window: 128000
+        max_tokens: 4096
+        supports_vision: true
+      - id: gpt-4o-mini
+        name: "GPT-4o Mini"
+        context_window: 128000
+        max_tokens: 4096
+
+  # ── ASR 提供商（产品内置，用户无感知） ──
+
+  dashscope_asr:
+    name: "阿里云 DashScope ASR"
+    protocol: dashscope-realtime
+    ws_url: wss://dashscope.aliyuncs.com/api-ws/v1/realtime
+    api_key: ${DASHSCOPE_API_KEY}
+    models:
+      - id: qwen3-asr-flash-realtime
+        name: "通义千问实时语音识别"
+
+  whisper_asr:
+    name: "OpenAI Whisper"
+    protocol: openai
+    base_url: https://api.openai.com/v1
+    api_key: ${OPENAI_API_KEY}
+    models:
+      - id: whisper-1
+        name: "Whisper"
+
+# ── Agent → 模型映射 ──
+# 格式: skill_id: provider_id/model_id
+# 每个 Agent 可按角色配置最优模型
+
+agent_models:
+  # 标准圆桌模式
+  product_manager: deepseek/deepseek-chat
+  architect: anthropic/claude-sonnet-4-20250514
+  project_manager: deepseek/deepseek-chat
+  business_analyst: deepseek/deepseek-chat
+  supervisor: deepseek/deepseek-reasoner
+
+  # 个人圆桌模式
+  user_advocate: deepseek/deepseek-chat
+  market_positioning: deepseek/deepseek-chat
+  product_feasibility: deepseek/deepseek-chat
+  market_adoption: deepseek/deepseek-chat
+  monetization: deepseek/deepseek-chat
+
+# ── 语音通话配置 ──
+voice:
+  # ASR 使用产品内置提供商（用户无感知）
+  asr_provider: dashscope_asr
+  asr_model: qwen3-asr-flash-realtime
+
+  # 语音对话的默认 LLM
+  default_llm: deepseek/deepseek-chat
+
+  # 会话限制
+  max_session_minutes: 5
+  max_concurrent: 50

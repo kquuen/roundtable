@@ -19,7 +19,7 @@ import os
 import sys
 from pathlib import Path
 
-from roundtable.providers import get_provider
+from roundtable.config import ConfigManager
 from roundtable.services import RoundtableService
 
 
@@ -94,24 +94,16 @@ def main():
         ]
         title = "Default Test Meeting"
 
-    # ── Initialize provider ──
-    provider = None
-    if not args.mock:
-        api_key = os.getenv("DEEPSEEK_API_KEY")
-        if api_key:
-            try:
-                provider = get_provider(provider="deepseek", api_key=api_key)
-                print(f"[roundtable] LLM mode: deepseek (agents={args.agents})")
-            except Exception as e:
-                print(f"[roundtable] Provider init failed: {e} — falling back to mock")
-        else:
-            print("[roundtable] DEEPSEEK_API_KEY not set — running in mock mode")
-
-    if provider is None:
+    # ── Initialize service ──
+    cfg = ConfigManager.get()
+    if args.mock or not cfg.loaded or not cfg.list_providers():
         print("[roundtable] Mock mode: keyword-based analysis")
-
-    # ── Run pipeline ──
-    svc = RoundtableService(provider=provider)
+        svc = RoundtableService()
+    else:
+        providers = cfg.list_providers()
+        agent_models = cfg.list_agent_models()
+        print(f"[roundtable] LLM mode: {len(providers)} providers, {len(agent_models)} agent models")
+        svc = RoundtableService()
     result = svc.run_pipeline_sync(
         session_id="s_cli",
         segments=segments,

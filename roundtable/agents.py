@@ -1,6 +1,8 @@
-"""Phase 2: Agent base class and built-in expert agents.
+"""Phase 3: Agent base class and built-in expert agents.
 
-Supports both real LLM (via ProviderAdapter) and mock mode for testing.
+Each Agent auto-resolves its own LLM provider from ConfigManager based on
+skill_id → model mapping. Supports explicit provider injection, auto-discovery
+from config, and mock mode for testing.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from roundtable.models import (
     ClaimLifecycle,
 )
 from roundtable.providers import (
-    ProviderAdapter, build_agent_prompt, build_debate_prompt,
+    BaseLLMProvider, build_agent_prompt, build_debate_prompt,
     parse_agent_response,
 )
 from roundtable.skills import load_skill
@@ -24,17 +26,43 @@ from roundtable.utils import run_async_safely
 class Agent:
     """Base agent class.
 
-    When a ProviderAdapter is injected, uses real LLM for analysis.
+    When a provider is injected (or auto-resolved from config), uses real LLM.
     When provider is None, falls back to mock keyword-based analysis.
     """
 
-    def __init__(self, skill_id: str, provider: ProviderAdapter | None = None):
+    # Sentinel for "auto-resolve from config" vs "explicitly set to None"
+    _AUTO = object()
+
+    def __init__(self, skill_id: str, provider: BaseLLMProvider | None | object = _AUTO):
         self.skill: SkillManifest = load_skill(skill_id)
-        self.provider = provider
+        if provider is not self._AUTO:
+            self.provider = provider  # honour explicit None (mock mode) or a provider instance
+        else:
+            self.provider = self._resolve_provider()
 
     @property
     def agent_id(self) -> str:
         return self.skill.skill_id
+
+    def _resolve_provider(self) -> BaseLLMProvider | None:
+        """Auto-resolve provider from config based on skill_id.
+
+        Returns the provider instance for this agent's configured model,
+        or None if no mapping exists or resolution fails
+        (falls back to mock analysis).
+        """
+        from roundtable.config import ConfigManager
+        from roundtable.providers import ProviderRouter
+
+        try:
+            model_ref = ConfigManager.get().get_agent_model(self.skill.skill_id)
+            if model_ref:
+                return ProviderRouter.get_instance().get(model_ref)
+        except Exception:
+            # Config not loaded, model not found, or API key missing —
+            # degrade gracefully to mock mode
+            pass
+        return None
 
     def analyze(
         self,
@@ -55,8 +83,12 @@ class Agent:
         self,
         evidence: EvidencePacket,
         peer_reviews: list[AgentReview] | None = None,
+        budget=None,
     ) -> AgentReview:
         """Async analysis using LLM provider."""
+        if self.provider is not None and budget is not None:
+            self.provider.budget = budget
+
         if peer_reviews:
             system_prompt, user_message = build_debate_prompt(
                 self.skill, evidence, peer_reviews,
@@ -238,7 +270,7 @@ class Agent:
 class ProductManager(Agent):
     """Product strategy analysis agent."""
 
-    def __init__(self, provider: ProviderAdapter | None = None):
+    def __init__(self, provider: BaseLLMProvider | None | object = Agent._AUTO):
         super().__init__("product_manager", provider=provider)
 
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
@@ -293,7 +325,7 @@ class ProductManager(Agent):
 class Architect(Agent):
     """Technical architecture analysis agent."""
 
-    def __init__(self, provider: ProviderAdapter | None = None):
+    def __init__(self, provider: BaseLLMProvider | None | object = Agent._AUTO):
         super().__init__("architect", provider=provider)
 
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
@@ -346,7 +378,7 @@ class Architect(Agent):
 class ProjectManager(Agent):
     """Project execution planning agent."""
 
-    def __init__(self, provider: ProviderAdapter | None = None):
+    def __init__(self, provider: BaseLLMProvider | None | object = Agent._AUTO):
         super().__init__("project_manager", provider=provider)
 
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
@@ -391,7 +423,7 @@ class ProjectManager(Agent):
 class BusinessAnalyst(Agent):
     """Business analysis agent."""
 
-    def __init__(self, provider: ProviderAdapter | None = None):
+    def __init__(self, provider: BaseLLMProvider | None | object = Agent._AUTO):
         super().__init__("business_analyst", provider=provider)
 
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:
@@ -434,7 +466,7 @@ class BusinessAnalyst(Agent):
 class SupervisorAgent(Agent):
     """Fact-checking supervisor agent (not the final Supervisor module)."""
 
-    def __init__(self, provider: ProviderAdapter | None = None):
+    def __init__(self, provider: BaseLLMProvider | None | object = Agent._AUTO):
         super().__init__("supervisor", provider=provider)
 
     def _analyze_mock(self, evidence: EvidencePacket) -> AgentReview:

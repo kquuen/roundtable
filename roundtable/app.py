@@ -157,6 +157,7 @@ class RunRoundtableRequest(BaseModel):
     agent_count: int = 5
     use_mock: bool = False
     lang: str = "zh"  # "zh" or "en"
+    stream: bool = False  # 启用 SSE 流式推送
 
 
 # ── Routes ──
@@ -323,6 +324,42 @@ async def speak(audio: UploadFile = File(...)):
             pass
 
 
+def _get_evidence_segments(session_id: str) -> list[dict]:
+    """Fetch stored evidence or fall back to sample data."""
+    segments = _store.get_evidence(session_id)
+    if not segments:
+        import json
+        data_path = Path(__file__).resolve().parent.parent / "data" / "sample_transcript.json"
+        if data_path.exists():
+            segments = json.loads(data_path.read_text(encoding="utf-8")).get("segments", [])
+        else:
+            segments = [{"speaker": "Demo", "text": "Test segment — no evidence uploaded."}]
+    return segments
+
+
+async def _start_sse_pipeline(
+    session_id: str,
+    run_fn,
+    finalize_fn,
+):
+    """Wrap a pipeline execution in an SSE queue and background task."""
+    queue: asyncio.Queue = asyncio.Queue()
+    _sse_queues[session_id] = queue
+
+    async def _runner():
+        try:
+            result = await run_fn(queue)
+            await queue.put({"type": "final_report", "data": result})
+        except Exception as e:
+            logger.exception("[%s] Pipeline error", session_id)
+            await queue.put({"type": "error", "content": str(e)})
+        finally:
+            await queue.put({"type": "done"})
+
+    asyncio.create_task(_runner())
+    return {"session_id": session_id, "stream_url": f"/roundtable/stream/{session_id}"}
+
+
 @app.post("/roundtable/run")
 async def run_roundtable(req: RunRoundtableRequest):
     """Execute a full roundtable analysis using stored evidence.
@@ -334,19 +371,37 @@ async def run_roundtable(req: RunRoundtableRequest):
     if not session:
         raise HTTPException(404, "Session not found — create a session first")
 
-    # Use stored evidence, or fall back to sample data
-    segments = _store.get_evidence(req.session_id)
-    if not segments:
-        import json
-        data_path = Path(__file__).resolve().parent.parent / "data" / "sample_transcript.json"
-        if data_path.exists():
-            segments = json.loads(data_path.read_text(encoding="utf-8")).get("segments", [])
-        else:
-            segments = [{"speaker": "Demo", "text": "Test segment — no evidence uploaded."}]
-
+    segments = _get_evidence_segments(req.session_id)
     _store.update_status(req.session_id, SessionStatus.ANALYZING)
 
     svc = _get_service()
+
+    if req.stream:
+        async def _run_fn(queue):
+            result = await svc.run_pipeline(
+                session_id=req.session_id,
+                segments=segments,
+                mode=session.mode,
+                title=session.title,
+                agent_count=req.agent_count,
+                lang=req.lang,
+                event_queue=queue,
+            )
+            if result.pending_confirmation_count > 0:
+                _store.update_status(req.session_id, SessionStatus.REVIEWING)
+            else:
+                _store.update_status(req.session_id, SessionStatus.COMPLETED)
+            return {
+                "session_id": result.session_id,
+                "mode": result.mode,
+                "domain": result.domain_name,
+                "report_path": result.report_path,
+                "memories_written": result.memories_written,
+                "pending_confirmation_count": result.pending_confirmation_count,
+                "status": "reviewing" if result.pending_confirmation_count > 0 else "completed",
+                "report": result.report,
+            }
+        return await _start_sse_pipeline(req.session_id, _run_fn, None)
 
     result = await svc.run_pipeline(
         session_id=req.session_id,
@@ -386,18 +441,25 @@ async def run_debate(req: RunRoundtableRequest):
     if not session:
         raise HTTPException(404, "Session not found — create a session first")
 
-    segments = _store.get_evidence(req.session_id)
-    if not segments:
-        import json
-        data_path = Path(__file__).resolve().parent.parent / "data" / "sample_transcript.json"
-        if data_path.exists():
-            segments = json.loads(data_path.read_text(encoding="utf-8")).get("segments", [])
-        else:
-            segments = [{"speaker": "Demo", "text": "Test segment — no evidence uploaded."}]
-
+    segments = _get_evidence_segments(req.session_id)
     _store.update_status(req.session_id, SessionStatus.ANALYZING)
 
     svc = _get_service()
+
+    if req.stream:
+        async def _run_fn(queue):
+            result = await svc.run_debate_pipeline(
+                session_id=req.session_id,
+                segments=segments,
+                mode=session.mode,
+                title=session.title,
+                agent_count=req.agent_count,
+                lang=req.lang,
+                event_queue=queue,
+            )
+            _store.update_status(req.session_id, SessionStatus.COMPLETED)
+            return result
+        return await _start_sse_pipeline(req.session_id, _run_fn, None)
 
     result = await svc.run_debate_pipeline(
         session_id=req.session_id,
@@ -730,7 +792,21 @@ from roundtable.debate import (
     AnchoredDebateEngine, get_interview_questions, sanitize_user_bias,
     _DEFAULT_AGENTS,
 )
+from roundtable.providers import ProviderRouter
 from roundtable.report import compose_anchored_report
+
+
+def _get_debate_provider():
+    """Resolve a working LLM provider for debate engines."""
+    router = ProviderRouter.get_instance()
+    # Try providers in priority order
+    for ref in ("deepseek/deepseek-chat", "anthropic/claude-sonnet-4-20250514", "openai/gpt-4o"):
+        try:
+            return router.get(ref)
+        except Exception:
+            continue
+    return None
+
 
 # SSE会话队列（session_id → asyncio.Queue）
 _sse_queues: dict[str, asyncio.Queue] = {}
@@ -792,7 +868,7 @@ async def quick_roundtable(req: QuickRequest):
         user_bias_signal=bias_signal,
     )
 
-    engine = AnchoredDebateEngine()
+    engine = AnchoredDebateEngine(provider=_get_debate_provider())
     report = await engine.run(interview, mode=req.mode)
 
     # 渲染Markdown报告
@@ -836,7 +912,7 @@ async def quick_roundtable_stream_start(req: QuickRequest):
     # 后台启动辩论
     async def run_debate():
         try:
-            engine = AnchoredDebateEngine()
+            engine = AnchoredDebateEngine(provider=_get_debate_provider())
             report = await engine.run(interview, mode=req.mode, event_queue=queue)
             md = compose_anchored_report(report)
             await queue.put({

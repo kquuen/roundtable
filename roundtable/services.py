@@ -23,6 +23,16 @@ logger = logging.getLogger("roundtable.services")
 _PROVIDER_UNSET = object()
 
 
+async def _emit_stage(queue: Optional[asyncio.Queue], stage: str, idx: int, extra: Optional[dict] = None) -> None:
+    """Push a pipeline stage event to the SSE queue."""
+    if queue is None:
+        return
+    payload = {"type": "stage", "stage": stage, "idx": idx}
+    if extra:
+        payload.update(extra)
+    await queue.put(payload)
+
+
 def _has_llm_provider(agent_reviews) -> bool:
     """Infer whether any agent review came from an LLM-backed agent."""
     return any(getattr(ar, "provider", None) for ar in agent_reviews)
@@ -110,6 +120,7 @@ class RoundtableService:
         agent_count: int = 5,
         lang: str = "zh",
         max_tokens: int = 80000,
+        event_queue: Optional[asyncio.Queue] = None,
     ) -> dict:
         """Run a two-round debate pipeline (Phase 6).
 
@@ -125,12 +136,14 @@ class RoundtableService:
 
         # 1. Evidence
         evidence = build_evidence_packet(session_id, mode, segments)
+        await _emit_stage(event_queue, "evidence", 0)
 
         # 0. Domain classification
         from roundtable.domain import classify_domain
         domain = await classify_domain(evidence, provider=self.provider)
         domain_name = domain.name
         logger.info("[%s] Debate domain classified: %s", session_id, domain_name)
+        await _emit_stage(event_queue, "domain", 0)
 
         # 2. Create agents (agents auto-resolve providers unless explicitly injected)
         if self._provider_explicit:
@@ -139,14 +152,17 @@ class RoundtableService:
             )
         else:
             agents = _create_agents(agent_count=agent_count, domain_name=domain_name)
+        await _emit_stage(event_queue, "agents", 1, {"agent_count": len(agents)})
 
         # 3. Run debate
         engine = DebateEngine(provider=self.provider, budget=budget, domain_name=domain_name)
         debate_session = await engine.run_debate(evidence, agents)
+        await _emit_stage(event_queue, "review", 2, {"rounds": len(debate_session.rounds)})
 
         # 4. Build report
         from roundtable.report import compose_debate_report
         report = compose_debate_report(debate_session, session_title=title, lang=lang)
+        await _emit_stage(event_queue, "report", 4)
 
         logger.info("[%s] Debate pipeline complete: %d rounds, %s",
                      session_id, len(debate_session.rounds), budget.summary())
@@ -171,6 +187,7 @@ class RoundtableService:
         lang: str = "zh",
         max_tokens: int = 80000,
         domain_name: str | None = None,
+        event_queue: Optional[asyncio.Queue] = None,
     ) -> PipelineResult:
         """Run the complete roundtable pipeline.
 
@@ -194,6 +211,7 @@ class RoundtableService:
                      session_id, mode, agent_count, max_tokens)
         evidence = build_evidence_packet(session_id, mode, segments)
         logger.info("[%s] Evidence built: %d chunks", session_id, len(evidence.transcript_chunks))
+        await _emit_stage(event_queue, "evidence", 0, {"chunks": len(evidence.transcript_chunks)})
 
         # 0. Domain classification (after evidence is built)
         from roundtable.domain import classify_domain
@@ -201,8 +219,10 @@ class RoundtableService:
             domain = await classify_domain(evidence, provider=self.provider)
             domain_name = domain.name
         logger.info("[%s] Domain classified: %s", session_id, domain_name)
+        await _emit_stage(event_queue, "domain", 0, {"domain": domain_name})
 
         # 2. Agent analysis. Explicit provider -> async path; otherwise auto (agent-level resolve/mock).
+        await _emit_stage(event_queue, "agents", 1, {"agent_count": agent_count})
         if self._provider_explicit:
             if self.provider is not None:
                 agent_reviews = await run_orchestrator_async(
@@ -231,6 +251,7 @@ class RoundtableService:
         if self._provider_explicit:
             auto_llm_attempted = False
         logger.info("[%s] Agent analysis complete: %d reviews", session_id, len(agent_reviews))
+        await _emit_stage(event_queue, "review", 2, {"reviews": len(agent_reviews)})
 
         # Budget: estimate agent analysis cost
         analysis_chars = sum(
@@ -267,9 +288,11 @@ class RoundtableService:
                 session_id, agent_reviews, supervisor_reviews,
             )
             memories_written = len(written)
+        await _emit_stage(event_queue, "memory", 3, {"memories": memories_written})
 
         # 5. Report
         report = compose_report(agent_reviews, supervisor_reviews, session_title=title, lang=lang)
+        await _emit_stage(event_queue, "report", 4)
 
         # 6. Count pending confirmations
         from roundtable.models import ReviewResult

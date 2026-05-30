@@ -475,14 +475,16 @@ class AnchoredDebateEngine:
         if self.provider:
             raw = await self._provider_call(prompt, max_tokens=500)
             stance = self._parse_stance(raw)
+            stance_summary = self._extract_summary(raw, skill_id)
         else:
             raw, stance = self._mock_specialist(skill_id, anchor)
+            stance_summary = f"{skill_id} 对用户计划的分析"
 
         return SpecialistResponse(
             argument_id=f"arg_{skill_id}_{uuid.uuid4().hex[:6]}",
             agent_id=skill_id,
             stance=stance,
-            stance_summary=f"{skill_id} 对用户计划的分析",
+            stance_summary=stance_summary,
             supporting_points=[],
             challenge_points=[],
             raw_content=raw,
@@ -538,16 +540,23 @@ class AnchoredDebateEngine:
         challenges = [r for r in responses if r.stance == SpecialistStance.CHALLENGE]
         mixed = [r for r in responses if r.stance == SpecialistStance.MIXED]
 
-        validated = [f"{r.agent_id}：{r.stance_summary}" for r in supports]
-        challenged = [f"{r.agent_id}：{r.stance_summary}" for r in challenges + mixed]
+        _ROLE_NAMES = {
+            "market_positioning": "市场定位",
+            "product_feasibility": "产品可行性",
+            "market_adoption": "市场采纳",
+            "monetization": "变现路径",
+        }
+
+        validated = [f"{_ROLE_NAMES.get(r.agent_id, r.agent_id)}：{r.stance_summary}" for r in supports]
+        challenged = [f"{_ROLE_NAMES.get(r.agent_id, r.agent_id)}：{r.stance_summary}" for r in challenges + mixed]
 
         conclusions = []
         if validated:
-            conclusions.append(f"✅ 得到支持的方面：{validated[0]}")
+            conclusions.append(f"✅ 支持：{validated[0]}")
         if challenged:
-            conclusions.append(f"⚠️ 被质疑的方面：{challenged[0]}")
+            conclusions.append(f"⚠️ 质疑：{challenged[0]}")
         if gaps:
-            conclusions.append(f"❓ 关键信息缺口：{gaps[0].gap_description}")
+            conclusions.append(f"❓ 缺口：{gaps[0].gap_description}")
 
         key_dispute = challenged[0] if challenged else "各专家基本一致"
         blind_spot = gaps[0].gap_description if gaps else "暂无明显盲区"
@@ -620,6 +629,21 @@ class AnchoredDebateEngine:
         elif "挑战" in raw and "支持" not in raw:
             return SpecialistStance.CHALLENGE
         return SpecialistStance.MIXED
+
+    def _extract_summary(self, raw: str, skill_id: str) -> str:
+        """从LLM原始输出中提取第一句有意义的结论。"""
+        import re
+        # 去掉常见的前缀标记
+        cleaned = re.sub(r"^对用户愿景代言人的立场：.*?\n", "", raw).strip()
+        # 找"核心论据："之后的内容
+        match = re.search(r"核心论据[：:]\s*(.+?)(?:\n|$)", cleaned)
+        if match:
+            return match.group(1).strip()[:150]
+        # 找第一句非空有意义文字
+        lines = [l.strip() for l in cleaned.split("\n") if len(l.strip()) > 10]
+        if lines:
+            return lines[0][:150]
+        return f"{skill_id}分析完成"
 
     def _extract_answers(self, interview: InterviewContext) -> list[str]:
         return [v for v in interview.answers.values() if v]

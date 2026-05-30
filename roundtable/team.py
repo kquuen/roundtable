@@ -11,7 +11,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 from roundtable.models import EvidencePacket, TeamTemplate
-from roundtable.providers import ProviderAdapter
+from roundtable.providers import BaseLLMProvider
 from roundtable.utils import run_async_safely
 
 
@@ -79,7 +79,7 @@ BUILTIN_TEAMS: list[TeamTemplate] = [
 
 def classify_session(
     evidence: EvidencePacket,
-    provider: Optional[ProviderAdapter] = None,
+    provider: Optional[BaseLLMProvider] = None,
 ) -> str:
     """Classify a session based on transcript content.
 
@@ -105,7 +105,7 @@ def classify_session(
 
 async def classify_session_async(
     evidence: EvidencePacket,
-    provider: ProviderAdapter,
+    provider: BaseLLMProvider,
 ) -> str:
     """Async classification — always uses LLM."""
     return await _classify_with_llm(evidence, provider)
@@ -115,7 +115,7 @@ async def classify_session_async(
 
 async def _classify_with_llm(
     evidence: EvidencePacket,
-    provider: ProviderAdapter,
+    provider: BaseLLMProvider,
 ) -> str:
     """Use LLM to semantically classify the session type."""
     text = " ".join(c.text for c in evidence.transcript_chunks)
