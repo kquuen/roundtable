@@ -22,11 +22,11 @@ except PackageNotFoundError:
 
 import json as _json
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Utf8JSONResponse(JSONResponse):
@@ -56,6 +56,11 @@ from roundtable.feedback import (
     process_user_correction, process_user_answer,
     update_memory_confirmation, get_pending_items,
 )
+from roundtable.auth import (
+    UserStore, get_user_store, get_current_user, require_user,
+    UserRegisterRequest, UserLoginRequest, TokenResponse, User,
+    _create_access_token, JWT_EXPIRE_HOURS,
+)
 
 setup_logging()
 
@@ -75,6 +80,13 @@ def _get_service() -> RoundtableService:
         report_store=_reports,
         memory_store=_memory,
     )
+
+
+def _require_session_owner(session_id: str, user: User) -> Session:
+    s = _store.get(session_id)
+    if not s or s.created_by != user.username:
+        raise HTTPException(404, "Session not found")
+    return s
 
 def _llm_enabled() -> bool:
     """Check if any LLM provider is both configured and usable."""
@@ -119,10 +131,14 @@ app = FastAPI(
 )
 
 # CORS — allow all origins in dev, restrict via env var in production
-_allowed_origins = os.getenv(
-    "CORS_ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:5173",
-).split(",")
+_allowed_origins = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:3000,http://localhost:5173",
+    ).split(",")
+    if o.strip()
+]
 
 if "*" in _allowed_origins:  # allow_credentials=True below
     logger.warning(
@@ -167,38 +183,132 @@ class UploadTextEvidenceRequest(BaseModel):
 
 class RunRoundtableRequest(BaseModel):
     session_id: str
-    agent_count: int = 5
+    agent_count: int = Field(5, ge=1, le=20)
     use_mock: bool = False
     lang: str = "zh"  # "zh" or "en"
     stream: bool = False  # 启用 SSE 流式推送
 
 
-# ── Routes ──
+class ApiKeyUpdateRequest(BaseModel):
+    provider: str = Field(min_length=1, max_length=32)
+    key: str = Field(min_length=10, max_length=256)
+
+
+# ══════════════════════════════════════════════
+# Auth
+# ══════════════════════════════════════════════
+
+@app.post("/auth/register", status_code=201)
+async def auth_register(req: UserRegisterRequest):
+    """Register a new user account."""
+    try:
+        user = get_user_store().create(req.username, req.email, req.password)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    token = _create_access_token(user.user_id, user.username)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": JWT_EXPIRE_HOURS * 3600,
+        "user": user.model_dump(),
+    }
+
+
+@app.post("/auth/login")
+async def auth_login(req: UserLoginRequest):
+    """Login and obtain JWT token."""
+    user = get_user_store().authenticate(req.username, req.password)
+    if not user:
+        raise HTTPException(401, "Invalid username or password")
+    token = _create_access_token(user.user_id, user.username)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": JWT_EXPIRE_HOURS * 3600,
+        "user": user.model_dump(),
+    }
+
+
+@app.get("/auth/me")
+async def auth_me(user: User = Depends(require_user)):
+    """Get current authenticated user."""
+    return user.model_dump()
+
+
+@app.get("/user/api-keys")
+async def list_api_keys(user: User = Depends(require_user)):
+    from roundtable.api_keys import get_user_api_keys
+    return {"keys": get_user_api_keys(user)}
+
+
+@app.post("/user/api-keys")
+async def update_api_key(req: ApiKeyUpdateRequest, user: User = Depends(require_user)):
+    from roundtable.api_keys import set_user_api_key
+    set_user_api_key(user, req.provider, req.key)
+    return {"status": "updated", "provider": req.provider}
+
+
+@app.delete("/user/api-keys/{provider}")
+async def delete_api_key(provider: str, user: User = Depends(require_user)):
+    from roundtable.api_keys import delete_user_api_key
+    delete_user_api_key(user, provider)
+    return {"status": "deleted", "provider": provider}
+
+
+@app.get("/user/usage")
+async def get_usage(user: User = Depends(require_user)):
+    store = get_user_store()
+    db_user = store.get_by_id(user.user_id)
+    if not db_user:
+        raise HTTPException(404, "User not found")
+    return {
+        "monthly_quota": db_user.monthly_quota,
+        "monthly_used": db_user.monthly_used,
+        "remaining": max(0, db_user.monthly_quota - db_user.monthly_used),
+    }
+
+
+@app.get("/user/sessions")
+async def list_user_sessions(
+    user: User = Depends(require_user),
+    limit: int = 20,
+    offset: int = 0,
+):
+    sessions = _store.list_by_user(user.username, limit=limit, offset=offset)
+    return {
+        "total": len(sessions),
+        "limit": limit,
+        "offset": offset,
+        "sessions": [s.model_dump() for s in sessions],
+    }
+
+
+# ══════════════════════════════════════════════
+# Sessions
+# ══════════════════════════════════════════════
+
+
 
 
 
 @app.post("/session/create", status_code=201)
-async def create_session(req: CreateSessionRequest):
+async def create_session(req: CreateSessionRequest, user: User = Depends(require_user)):
     """Create a new analysis session (persisted to disk)."""
-    session = _store.create(title=req.title, mode=req.mode)
+    session = _store.create(title=req.title, mode=req.mode, created_by=user.username if user else "anonymous")
     return session.model_dump()
 
 
 @app.get("/session/{session_id}")
-async def get_session(session_id: str):
+async def get_session(session_id: str, user: User = Depends(require_user)):
     """Get session details."""
-    s = _store.get(session_id)
-    if not s:
-        raise HTTPException(404, "Session not found")
+    s = _require_session_owner(session_id, user)
     return s.model_dump()
 
 
 @app.get("/session/{session_id}/reports")
-async def list_reports(session_id: str):
+async def list_reports(session_id: str, user: User = Depends(require_user)):
     """List archived reports for a session."""
-    s = _store.get(session_id)
-    if not s:
-        raise HTTPException(404, "Session not found")
+    _require_session_owner(session_id, user)
     return {
         "session_id": session_id,
         "reports": _reports.list_for_session(session_id),
@@ -206,10 +316,9 @@ async def list_reports(session_id: str):
 
 
 @app.post("/evidence/upload")
-async def upload_evidence(req: UploadEvidenceRequest):
+async def upload_evidence(req: UploadEvidenceRequest, user: User = Depends(require_user)):
     """Upload meeting text segments (persisted to session file)."""
-    if not _store.get(req.session_id):
-        raise HTTPException(404, "Session not found — create a session first")
+    _require_session_owner(req.session_id, user)
 
     evidence = build_evidence_packet(req.session_id, "meeting", req.segments)
     _store.store_evidence(req.session_id, req.segments)
@@ -243,10 +352,9 @@ def _parse_text_segments(text: str) -> list[dict]:
 
 
 @app.post("/evidence/text")
-async def upload_text_evidence(req: UploadTextEvidenceRequest):
+async def upload_text_evidence(req: UploadTextEvidenceRequest, user: User = Depends(require_user)):
     """Upload plain TXT evidence and persist normalized transcript segments."""
-    if not _store.get(req.session_id):
-        raise HTTPException(404, "Session not found — create a session first")
+    _require_session_owner(req.session_id, user)
 
     segments = _parse_text_segments(req.text)
     if not segments:
@@ -267,7 +375,7 @@ async def upload_text_evidence(req: UploadTextEvidenceRequest):
 
 
 @app.post("/speak")
-async def speak(audio: UploadFile = File(...), session_id: str = Form(default="")):
+async def speak(audio: UploadFile = File(...), session_id: str = Form(default=""), user: User = Depends(require_user)):
     """Upload an audio file → transcribe via Whisper or MiMo → create session + evidence.
 
     Accepts: mp3, wav, m4a, ogg, webm
@@ -302,11 +410,12 @@ async def speak(audio: UploadFile = File(...), session_id: str = Form(default=""
 
     # Save uploaded file to temp
     suffix = Path(audio.filename or "audio.mp3").suffix or ".mp3"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = Path(tmp.name)
-
+    tmp_path = None
     try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
         # Transcribe — try Whisper first, fallback to MiMo
         result = None
         backend_used = ""
@@ -340,12 +449,14 @@ async def speak(audio: UploadFile = File(...), session_id: str = Form(default=""
         # Reuse the current frontend session when provided; otherwise create one.
         existing = _store.get(session_id) if session_id else None
         if existing:
+            _require_session_owner(session_id, user)
             sid = existing.session_id
         else:
             title = audio.filename or "语音输入"
             session = _store.create(
                 title=title,
                 mode="personal_roundtable",
+                created_by=user.username,
             )
             sid = session.session_id
 
@@ -371,23 +482,16 @@ async def speak(audio: UploadFile = File(...), session_id: str = Form(default=""
 
     finally:
         # Clean up temp file
-        try:
-            tmp_path.unlink()
-        except OSError:
-            pass
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
 
 def _get_evidence_segments(session_id: str) -> list[dict]:
-    """Fetch stored evidence or fall back to sample data."""
-    segments = _store.get_evidence(session_id)
-    if not segments:
-        import json
-        data_path = Path(__file__).resolve().parent.parent / "data" / "sample_transcript.json"
-        if data_path.exists():
-            segments = json.loads(data_path.read_text(encoding="utf-8")).get("segments", [])
-        else:
-            segments = [{"speaker": "Demo", "text": "Test segment — no evidence uploaded."}]
-    return segments
+    """Fetch stored evidence. Returns empty list if none uploaded."""
+    return _store.get_evidence(session_id) or []
 
 
 async def _start_sse_pipeline(
@@ -396,8 +500,11 @@ async def _start_sse_pipeline(
     finalize_fn,
 ):
     """Wrap a pipeline execution in an SSE queue and background task."""
-    queue: asyncio.Queue = asyncio.Queue()
-    _sse_queues[session_id] = queue
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+    stream_key = _uuid.uuid4().hex
+    async with _sse_lock:
+        _sse_queues[session_id] = queue
+        _sse_keys[session_id] = stream_key
 
     async def _runner():
         try:
@@ -408,21 +515,21 @@ async def _start_sse_pipeline(
             await queue.put({"type": "error", "content": str(e)})
         finally:
             await queue.put({"type": "done"})
+            async with _sse_lock:
+                _sse_keys.pop(session_id, None)
 
     asyncio.create_task(_runner())
-    return {"session_id": session_id, "stream_url": f"/roundtable/stream/{session_id}"}
+    return {"session_id": session_id, "stream_url": f"/roundtable/stream/{session_id}?key={stream_key}"}
 
 
 @app.post("/roundtable/run")
-async def run_roundtable(req: RunRoundtableRequest):
+async def run_roundtable(req: RunRoundtableRequest, user: User = Depends(require_user)):
     """Execute a full roundtable analysis using stored evidence.
 
     Uses evidence uploaded via /evidence/upload.
     Report is archived to reports/ automatically.
     """
-    session = _store.get(req.session_id)
-    if not session:
-        raise HTTPException(404, "Session not found — create a session first")
+    session = _require_session_owner(req.session_id, user)
 
     segments = _get_evidence_segments(req.session_id)
     _store.update_status(req.session_id, SessionStatus.ANALYZING)
@@ -484,15 +591,13 @@ async def run_roundtable(req: RunRoundtableRequest):
 
 
 @app.post("/roundtable/debate")
-async def run_debate(req: RunRoundtableRequest):
+async def run_debate(req: RunRoundtableRequest, user: User = Depends(require_user)):
     """Execute a two-round debate analysis (Phase 6).
 
     Uses the same evidence as /roundtable/run but routes through
     the DebateEngine for Round 1 (independent) + Round 2 (peer review).
     """
-    session = _store.get(req.session_id)
-    if not session:
-        raise HTTPException(404, "Session not found — create a session first")
+    session = _require_session_owner(req.session_id, user)
 
     segments = _get_evidence_segments(req.session_id)
     _store.update_status(req.session_id, SessionStatus.ANALYZING)
@@ -528,8 +633,9 @@ async def run_debate(req: RunRoundtableRequest):
 
 
 @app.post("/team/recommend")
-async def recommend_team(req: UploadEvidenceRequest):
+async def recommend_team(req: UploadEvidenceRequest, user: User = Depends(require_user)):
     """Recommend expert teams based on session content."""
+    _require_session_owner(req.session_id, user)
     evidence = build_evidence_packet(req.session_id, "meeting", req.segments)
     session_type = classify_session(evidence)
     teams = recommend_teams(session_type)
@@ -545,17 +651,22 @@ async def recommend_team(req: UploadEvidenceRequest):
 # ── Memory ──
 
 @app.get("/memory/search")
-async def search_memory(q: str = "", limit: int = 20):
-    """Keyword search across all memory entries."""
+async def search_memory(q: str = "", limit: int = 20, user: User = Depends(require_user)):
+    """Keyword search across user's own memory entries."""
     if not q:
         return {"results": [], "query": ""}
-    results = _memory.search(q, limit=limit)
-    return {"query": q, "result_count": len(results), "results": results}
+    # Filter to user's sessions only
+    user_sessions = _store.list_by_user(user.username, limit=1000)
+    session_ids = {s.session_id for s in user_sessions}
+    all_results = _memory.search(q, limit=limit * 10)
+    filtered = [r for r in all_results if r.get("session_id") in session_ids][:limit]
+    return {"query": q, "result_count": len(filtered), "results": filtered}
 
 
 @app.get("/memory/{session_id}")
-async def get_memory(session_id: str):
+async def get_memory(session_id: str, user: User = Depends(require_user)):
     """Get auto-written memory entries for a session."""
+    _require_session_owner(session_id, user)
     entries = _memory.get(session_id)
     return {
         "session_id": session_id,
@@ -565,8 +676,8 @@ async def get_memory(session_id: str):
 
 
 @app.post("/skills/reload")
-async def reload_skills_endpoint():
-    """Hot-reload skill definitions from skills/ directory."""
+async def reload_skills_endpoint(user: User = Depends(require_user)):
+    """Hot-reload skill definitions from skills/ directory. Admin only."""
     result = reload_skills()
     return {
         "status": "reloaded",
@@ -596,14 +707,12 @@ class MemoryConfirmRequest(BaseModel):
 
 
 @app.get("/session/{session_id}/pending")
-async def get_pending(session_id: str):
+async def get_pending(session_id: str, user: User = Depends(require_user)):
     """获取当前 session 中需要用户裁决的所有待办项。
 
     读取 /roundtable/run 时持久化的 reviews，而非重新分析。
     """
-    s = _store.get(session_id)
-    if not s:
-        raise HTTPException(404, "Session not found")
+    s = _require_session_owner(session_id, user)
 
     ar_dicts, sr_dicts = _store.get_reviews(session_id)
     if not ar_dicts or not sr_dicts:
@@ -624,15 +733,13 @@ async def get_pending(session_id: str):
 
 
 @app.post("/review/confirm")
-async def confirm_review(req: ConfirmReviewRequest):
+async def confirm_review(req: ConfirmReviewRequest, user: User = Depends(require_user)):
     """用户对 NEEDS_CONFIRMATION 的 claim 提交裁决。
 
     读取 /roundtable/run 时持久化的 reviews，应用用户裁决。
     所有裁决处理完毕后，将 session 状态变为 COMPLETED。
     """
-    s = _store.get(req.session_id)
-    if not s:
-        raise HTTPException(404, "Session not found")
+    s = _require_session_owner(req.session_id, user)
 
     ar_dicts, sr_dicts = _store.get_reviews(req.session_id)
     if not ar_dicts or not sr_dicts:
@@ -683,11 +790,9 @@ async def confirm_review(req: ConfirmReviewRequest):
 
 
 @app.post("/session/{session_id}/feedback")
-async def submit_feedback(session_id: str, req: FeedbackRequest):
+async def submit_feedback(session_id: str, req: FeedbackRequest, user: User = Depends(require_user)):
     """提交用户反馈：纠正系统推断 + 回答问题。"""
-    s = _store.get(session_id)
-    if not s:
-        raise HTTPException(404, "Session not found")
+    s = _require_session_owner(session_id, user)
 
     correction_results = []
     for c_dict in req.corrections:
@@ -717,7 +822,7 @@ async def submit_feedback(session_id: str, req: FeedbackRequest):
 
 
 @app.post("/memory/confirm")
-async def confirm_memory(req: MemoryConfirmRequest):
+async def confirm_memory(req: MemoryConfirmRequest, user: User = Depends(require_user)):
     """用户确认或驳回一条自动写入的记忆条目。"""
     result = update_memory_confirmation(
         _memory, req.session_id, req.memory_id, req.confirmed,
@@ -757,7 +862,6 @@ async def list_providers():
                 "id": p.id,
                 "name": p.name,
                 "protocol": p.protocol,
-                "base_url": p.base_url,
                 "models": [m.get("id") for m in p.models],
             })
     return {
@@ -774,6 +878,7 @@ async def list_providers():
 
 import os
 
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 MAX_VOICE_CONCURRENT = int(os.getenv("VOICE_MAX_CONCURRENT", "50"))
 _voice_semaphore = asyncio.Semaphore(MAX_VOICE_CONCURRENT)
 _voice_active_count = 0
@@ -850,12 +955,17 @@ from roundtable.providers import ProviderRouter
 from roundtable.report import compose_anchored_report
 
 
-def _get_debate_provider():
-    """Resolve a working LLM provider for debate engines."""
+def _get_debate_provider(user=None):
+    """Resolve a working LLM provider for debate engines.
+
+    If user has custom API keys, prefer those over platform defaults.
+    """
     router = ProviderRouter.get_instance()
     # Try providers in priority order
     for ref in ("deepseek/deepseek-chat", "anthropic/claude-sonnet-4-20250514", "openai/gpt-4o"):
         try:
+            if user:
+                return router.get_for_user(ref, user)
             return router.get(ref)
         except Exception:
             continue
@@ -864,6 +974,8 @@ def _get_debate_provider():
 
 # SSE会话队列（session_id → asyncio.Queue）
 _sse_queues: dict[str, asyncio.Queue] = {}
+_sse_keys: dict[str, str] = {}   # session_id → one-time stream key
+_sse_lock = asyncio.Lock()
 
 
 class InterviewStartRequest(BaseModel):
@@ -877,12 +989,12 @@ class InterviewAnswerRequest(BaseModel):
 
 
 @app.post("/roundtable/interview", response_class=Utf8JSONResponse)
-async def start_interview(req: InterviewStartRequest):
+async def start_interview(req: InterviewStartRequest, user: User = Depends(require_user)):
     """
     追问阶段：用户提交问题后，系统返回2-3个追问。
     用户回答后再调 /roundtable/quick 发起辩论。
     """
-    session_id = f"rt_{_uuid.uuid4().hex[:8]}"
+    session_id = f"rt_{_uuid.uuid4().hex}"
     try:
         template = DecisionTemplate(req.template)
     except ValueError:
@@ -902,13 +1014,13 @@ async def start_interview(req: InterviewStartRequest):
 
 
 @app.post("/roundtable/quick", response_class=Utf8JSONResponse)
-async def quick_roundtable(req: QuickRequest):
+async def quick_roundtable(req: QuickRequest, user: User = Depends(require_user)):
     """
     零门槛启动辩论（同步，等待完成后返回报告）。
     前端若需要实时流，请先调此端点获得 session_id，
     再 GET /roundtable/stream/{session_id}。
     """
-    session_id = f"rt_{_uuid.uuid4().hex[:8]}"
+    session_id = f"rt_{_uuid.uuid4().hex}"
     sanitized, bias_signal = sanitize_user_bias(req.question)
 
     # 整合追问上下文
@@ -922,7 +1034,7 @@ async def quick_roundtable(req: QuickRequest):
         user_bias_signal=bias_signal,
     )
 
-    engine = AnchoredDebateEngine(provider=_get_debate_provider())
+    engine = AnchoredDebateEngine(provider=_get_debate_provider(user=user))
     report = await engine.run(interview, mode=req.mode)
 
     # 渲染Markdown报告
@@ -941,12 +1053,12 @@ async def quick_roundtable(req: QuickRequest):
 
 
 @app.post("/roundtable/quick/stream-start", response_class=Utf8JSONResponse)
-async def quick_roundtable_stream_start(req: QuickRequest):
+async def quick_roundtable_stream_start(req: QuickRequest, user: User = Depends(require_user)):
     """
     启动流式辩论：返回 session_id，前端随即连接 SSE 端点。
     辩论在后台异步执行，事件通过 SSE 推送。
     """
-    session_id = f"rt_{_uuid.uuid4().hex[:8]}"
+    session_id = f"rt_{_uuid.uuid4().hex}"
     sanitized, bias_signal = sanitize_user_bias(req.question)
 
     interview = InterviewContext(
@@ -962,11 +1074,13 @@ async def quick_roundtable_stream_start(req: QuickRequest):
     # 创建事件队列
     queue: asyncio.Queue = asyncio.Queue()
     _sse_queues[session_id] = queue
+    stream_key = _uuid.uuid4().hex
+    _sse_keys[session_id] = stream_key
 
     # 后台启动辩论
     async def run_debate():
         try:
-            engine = AnchoredDebateEngine(provider=_get_debate_provider())
+            engine = AnchoredDebateEngine(provider=_get_debate_provider(user=user))
             report = await engine.run(interview, mode=req.mode, event_queue=queue)
             md = compose_anchored_report(report)
             await queue.put({
@@ -984,21 +1098,26 @@ async def quick_roundtable_stream_start(req: QuickRequest):
             await queue.put({"type": "error", "content": str(e)})
         finally:
             await queue.put({"type": "done"})
+            _sse_keys.pop(session_id, None)
 
     asyncio.create_task(run_debate())
 
-    return {"session_id": session_id, "stream_url": f"/roundtable/stream/{session_id}"}
+    return {"session_id": session_id, "stream_url": f"/roundtable/stream/{session_id}?key={stream_key}"}
 
 
 @app.get("/roundtable/stream/{session_id}")
-async def stream_debate_events(session_id: str):
+async def stream_debate_events(session_id: str, key: str = ""):
     """
     SSE端点：推送辩论过程的实时事件流。
     前端使用 EventSource 连接此端点。
+    通过一次性 stream_key 鉴权，避免 JWT 暴露在 URL 中。
     """
-    queue = _sse_queues.get(session_id)
-    if queue is None:
-        raise HTTPException(404, f"No active debate stream for session {session_id}")
+    async with _sse_lock:
+        if not key or _sse_keys.get(session_id) != key:
+            raise HTTPException(401, "Invalid or missing stream key")
+        queue = _sse_queues.get(session_id)
+        if queue is None:
+            raise HTTPException(404, f"No active debate stream for session {session_id}")
 
     import json as _j
 
@@ -1017,7 +1136,8 @@ async def stream_debate_events(session_id: str):
                 if event.get("type") in ("done", "error"):
                     break
         finally:
-            _sse_queues.pop(session_id, None)
+            async with _sse_lock:
+                _sse_queues.pop(session_id, None)
 
     return StreamingResponse(
         event_generator(),
@@ -1055,3 +1175,26 @@ if _FRONTEND_DIR.is_dir():
     # CSS/JS 静态资源
     app.mount("/css", StaticFiles(directory=str(_FRONTEND_DIR / "css")), name="css")
     app.mount("/js", StaticFiles(directory=str(_FRONTEND_DIR / "js")), name="js")
+
+
+# ══════════════════════════════════════════════
+# System Admin
+# ══════════════════════════════════════════════
+
+@app.post("/system/backup")
+async def system_backup(x_admin_token: str = Header(default="")):
+    from roundtable.admin import backup_database
+    return backup_database(x_admin_token)
+
+
+@app.get("/system/backups")
+async def list_backups_endpoint(x_admin_token: str = Header(default="")):
+    from roundtable.admin import list_backups
+    return {"backups": list_backups(x_admin_token)}
+
+
+@app.post("/system/restore")
+async def system_restore(req: dict, x_admin_token: str = Header(default="")):
+    from roundtable.admin import restore_database
+    filename = req.get("filename", "")
+    return restore_database(x_admin_token, filename)

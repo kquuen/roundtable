@@ -27,6 +27,19 @@ class SessionStatus(str, Enum):
     COMPLETED = "completed"
 
 
+_SESSION_TRANSITIONS: dict[str, set[str]] = {
+    "recording": {"transcribing", "analyzing"},
+    "transcribing": {"analyzing"},
+    "analyzing": {"reviewing", "completed"},
+    "reviewing": {"completed"},
+    "completed": set(),
+}
+
+
+def is_valid_status_transition(from_status: str, to_status: str) -> bool:
+    return to_status in _SESSION_TRANSITIONS.get(from_status, set())
+
+
 class Session(BaseModel):
     session_id: str = Field(description="Unique session identifier, e.g. s_123")
     mode: SessionMode = Field(default=SessionMode.MEETING)
