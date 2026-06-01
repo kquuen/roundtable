@@ -28,6 +28,14 @@ from roundtable.config import ConfigManager
 from roundtable.dependencies import get_store
 from roundtable.skills import load_from_directory
 from roundtable.logging_config import setup_logging
+from roundtable.middleware import (
+    request_id_middleware,
+    validation_exception_handler,
+    http_exception_handler,
+    global_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from roundtable.routers import (
     auth_router,
@@ -103,6 +111,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.middleware("http")(request_id_middleware)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(Exception, global_exception_handler)
 
 # ── Domain routers ──
 app.include_router(auth_router)

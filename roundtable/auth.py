@@ -301,3 +301,15 @@ async def require_user(token: Optional[str] = Depends(oauth2_scheme)) -> User:
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user
+
+
+async def require_admin(user: User = Depends(require_user)) -> User:
+    """Admin-only dependency."""
+    from roundtable.settings import get_settings
+    settings = get_settings()
+    if user.username not in settings.admin_user_list:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required",
+        )
+    return user

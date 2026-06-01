@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from roundtable.auth import require_admin, User
 from roundtable.config import ConfigManager
 from roundtable.dependencies import get_store, llm_enabled
 from roundtable.skills import load_from_directory, reload_skills, list_skills
@@ -12,7 +13,7 @@ router = APIRouter(tags=["skills"])
 
 
 @router.post("/skills/reload")
-async def reload_skills_endpoint():
+async def reload_skills_endpoint(user: User = Depends(require_admin)):
     """Hot-reload skill definitions from skills/ directory. Admin only."""
     result = reload_skills()
     return {

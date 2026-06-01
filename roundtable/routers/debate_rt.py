@@ -20,6 +20,7 @@ from roundtable.services.sse import (
     validate_stream_key,
     acquire_sse_lock,
     pop_sse_queue,
+    cancel_sse_pipeline,
 )
 
 logger = logging.getLogger("roundtable.routers.debate_rt")
@@ -162,7 +163,11 @@ async def quick_roundtable_stream_start(req: QuickRequest, user: User = Depends(
 
 
 @router.get("/stream/{session_id}")
-async def stream_debate_events(session_id: str, key: str = ""):
+async def stream_debate_events(
+    session_id: str,
+    key: str = "",
+    request: Request = None,
+):
     """SSE端点：推送辩论过程的实时事件流。"""
     async with acquire_sse_lock():
         if not validate_stream_key(session_id, key):
@@ -174,6 +179,12 @@ async def stream_debate_events(session_id: str, key: str = ""):
     async def event_generator():
         try:
             while True:
+                # Detect client disconnect and cancel pipeline
+                if request is not None and await request.is_disconnected():
+                    logger.info("[%s] Client disconnected, cancelling pipeline", session_id)
+                    await cancel_sse_pipeline(session_id)
+                    break
+
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=120.0)
                 except asyncio.TimeoutError:
