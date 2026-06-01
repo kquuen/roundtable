@@ -16,12 +16,12 @@ router = APIRouter()
 MAX_VOICE_CONCURRENT = int(os.getenv("VOICE_MAX_CONCURRENT", "50"))
 _voice_semaphore = asyncio.Semaphore(MAX_VOICE_CONCURRENT)
 _voice_active_count = 0
+_voice_lock = asyncio.Lock()
 
 
 @router.websocket("/ws/voice")
 async def voice_websocket(websocket: WebSocket):
     """实时语音通话 WebSocket 入口。"""
-    global _voice_active_count
 
     if _voice_semaphore.locked():
         await websocket.close(code=1013, reason="Server busy: too many voice sessions")
@@ -29,7 +29,9 @@ async def voice_websocket(websocket: WebSocket):
 
     async with _voice_semaphore:
         await websocket.accept()
-        _voice_active_count += 1
+        async with _voice_lock:
+            global _voice_active_count
+            _voice_active_count += 1
         logger.info("Voice WebSocket accepted. Active: %d/%d", _voice_active_count, MAX_VOICE_CONCURRENT)
 
         try:
@@ -52,5 +54,6 @@ async def voice_websocket(websocket: WebSocket):
             except Exception:
                 pass
         finally:
-            _voice_active_count -= 1
+            async with _voice_lock:
+                _voice_active_count -= 1
             logger.info("Voice WebSocket closed. Active: %d/%d", _voice_active_count, MAX_VOICE_CONCURRENT)
