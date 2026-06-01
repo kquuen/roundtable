@@ -5,6 +5,7 @@ description = "圆桌会议 (Roundtable Meeting) — AI 专家圆桌工作台后
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0",
+    "pydantic-settings>=2.0",
     "fastapi>=0.100.0",
     "python-multipart>=0.0.6",
     "uvicorn[standard]>=0.23.0",

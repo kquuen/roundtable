@@ -20,9 +20,12 @@ DB_PATH = Path("data/roundtable.db")
 
 def _get_conn() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 10000")
     return conn
 
 
@@ -161,7 +164,8 @@ def _from_json(text: str | None, default: Any = None) -> Any:
         return default
     try:
         return json.loads(text)
-    except Exception:
+    except json.JSONDecodeError:
+        logger.warning("JSON decode failed, returning default: %r", text[:200] if text else None)
         return default
 
 

@@ -160,7 +160,7 @@ class UserStore:
             # Rename JSON file to prevent re-migration
             self._json_path.rename(self._json_path.with_suffix(".json.migrated"))
         except Exception:
-            pass
+            logger.exception("User JSON migration failed")
 
     @staticmethod
     def _row_to_user(row: dict) -> UserInDB:

@@ -138,8 +138,8 @@ class ConfigManager:
             router = ProviderRouter.get_instance()
             router.clear_cache()
             logger.info("ProviderRouter cache cleared after config reload")
-        except Exception as e:
-            logger.warning("Failed to clear ProviderRouter cache on reload: %s", e)
+        except Exception:
+            logger.warning("Failed to clear ProviderRouter cache on reload", exc_info=True)
 
     # ── Provider queries ──
 

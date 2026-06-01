@@ -800,8 +800,9 @@ async def submit_feedback(session_id: str, req: FeedbackRequest, user: User = De
             corr = UserCorrection.from_dict(c_dict)
             r = process_user_correction(corr)
             correction_results.append(r)
-        except Exception as e:
-            correction_results.append({"error": str(e), "input": c_dict})
+        except Exception:
+            logger.exception("Feedback correction failed: %s", c_dict)
+            correction_results.append({"error": "Processing failed", "input": c_dict})
 
     answer_results = []
     for a_dict in req.answers:
@@ -967,8 +968,10 @@ def _get_debate_provider(user=None):
             if user:
                 return router.get_for_user(ref, user)
             return router.get(ref)
-        except Exception:
+        except Exception as exc:
+            logger.debug("Debate provider %s unavailable: %s", ref, exc)
             continue
+    logger.warning("All debate providers failed")
     return None
 
 
@@ -1094,8 +1097,9 @@ async def quick_roundtable_stream_start(req: QuickRequest, user: User = Depends(
                     "specialist_stances": report.specialist_stances,
                 },
             })
-        except Exception as e:
-            await queue.put({"type": "error", "content": str(e)})
+        except Exception:
+            logger.exception("[%s] Quick debate pipeline error", session_id)
+            await queue.put({"type": "error", "content": "Processing failed"})
         finally:
             await queue.put({"type": "done"})
             _sse_keys.pop(session_id, None)
