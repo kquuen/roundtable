@@ -46,6 +46,8 @@ def init_db() -> None:
         _add_column_if_missing(conn, "users", "custom_keys", "TEXT NOT NULL DEFAULT '{}'")
         _add_column_if_missing(conn, "users", "monthly_quota", "INTEGER NOT NULL DEFAULT 50000")
         _add_column_if_missing(conn, "users", "monthly_used", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "memories", "created_at", "TEXT")
+        _add_column_if_missing(conn, "memories", "updated_at", "TEXT")
     finally:
         conn.close()
 
@@ -139,6 +141,8 @@ def _create_tables(conn: sqlite3.Connection) -> None:
             source      TEXT NOT NULL DEFAULT 'supervisor_approved',
             requires_user_confirmation INTEGER NOT NULL DEFAULT 0,
             confirmed   INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT,
+            updated_at  TEXT,
             FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
         );
 
@@ -234,6 +238,134 @@ def update_user_usage(user_id: str, monthly_used: int) -> None:
     finally:
         conn.close()
 
+
+# ── Memories CRUD ──
+
+def insert_memory(
+    session_id: str,
+    memory_id: str,
+    memory_type: str,
+    content: str,
+    evidence_ids: list[str] | None = None,
+    source: str = "supervisor_approved",
+    requires_user_confirmation: bool = False,
+    confirmed: bool = False,
+    created_at: str | None = None,
+) -> None:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """INSERT INTO memories
+               (session_id, memory_id, memory_type, content, evidence_ids_json,
+                source, requires_user_confirmation, confirmed, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (session_id, memory_id, memory_type, content,
+             _to_json(evidence_ids or []), source,
+             1 if requires_user_confirmation else 0,
+             1 if confirmed else 0,
+             created_at or datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_memories_by_session(session_id: str) -> list[dict]:
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT memory_id, session_id, memory_type, content,
+                      evidence_ids_json, source, confirmed, created_at, updated_at
+               FROM memories WHERE session_id = ? ORDER BY created_at DESC""",
+            (session_id,),
+        ).fetchall()
+        return [
+            {
+                "memory_id": r["memory_id"],
+                "session_id": r["session_id"],
+                "memory_type": r["memory_type"],
+                "content": r["content"],
+                "evidence_ids": _from_json(r["evidence_ids_json"], []),
+                "source": r["source"],
+                "confirmed": bool(r["confirmed"]),
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def search_memories(keyword: str, limit: int = 20) -> list[dict]:
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT memory_id, session_id, memory_type, content,
+                      evidence_ids_json, source, confirmed, created_at, updated_at
+               FROM memories
+               WHERE content LIKE ?
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (f"%{keyword}%", limit),
+        ).fetchall()
+        return [
+            {
+                "memory_id": r["memory_id"],
+                "session_id": r["session_id"],
+                "memory_type": r["memory_type"],
+                "content": r["content"],
+                "evidence_ids": _from_json(r["evidence_ids_json"], []),
+                "source": r["source"],
+                "confirmed": bool(r["confirmed"]),
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def update_memory_entry(session_id: str, memory_id: str, updates: dict) -> bool:
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id FROM memories WHERE session_id = ? AND memory_id = ?",
+            (session_id, memory_id),
+        ).fetchone()
+        if not row:
+            return False
+
+        allowed = {"memory_type", "content", "source", "confirmed"}
+        fields = []
+        values = []
+        for k, v in updates.items():
+            if k in allowed:
+                fields.append(f"{k} = ?")
+                if k == "confirmed":
+                    values.append(1 if v else 0)
+                else:
+                    values.append(v)
+        if not fields:
+            return False
+
+        fields.append("updated_at = ?")
+        values.append(datetime.now(timezone.utc).isoformat())
+        values.append(session_id)
+        values.append(memory_id)
+
+        conn.execute(
+            f"UPDATE memories SET {', '.join(fields)} WHERE session_id = ? AND memory_id = ?",
+            values,
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+# ── Users CRUD ──
 
 def list_all_users() -> list[dict]:
     conn = _get_conn()

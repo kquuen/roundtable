@@ -1,35 +1,94 @@
-"""P1: Memory system — auto-write supervisor-approved claims to persistent memory.
+"""P3: Memory system — SQLite-backed persistent memory.
 
-Writes high-confidence facts and decisions to data/memory/ for future recall.
+Auto-write supervisor-approved claims to the SQLite memories table for future recall.
+Replaces legacy JSON file storage (data/memory/*.json) with transactional SQL.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-logger = logging.getLogger("roundtable.memory")
-
-from roundtable.models import (
-    AgentReview, EvidenceClaim, MemoryWrite,
-    SupervisorReview, ReviewResult, ClaimType,
+from roundtable.db import (
+    init_db,
+    insert_memory,
+    get_memories_by_session,
+    search_memories,
+    update_memory_entry,
 )
+from roundtable.models import (
+    AgentReview,
+    MemoryWrite,
+    SupervisorReview,
+    ReviewResult,
+    ClaimType,
+)
+
+logger = logging.getLogger("roundtable.memory")
 
 
 class MemoryStore:
-    """JSON file-based memory store.
+    """SQLite-backed memory store.
 
-    Directory layout:
-        data/memory/{session_id}.json   — memory entries per session
-        data/memory/_index.json         — cross-session memory index
+    Replaces JSON file storage with transactional SQLite operations.
+    Interface remains unchanged for backward compatibility.
     """
 
     def __init__(self, base_dir: str | Path = "data/memory"):
         self.base_dir = Path(base_dir)
-        self.base_dir.mkdir(parents=True, exist_ok=True)
-        self._index_path = self.base_dir / "_index.json"
+        init_db()
+        self._migrate_from_json_if_needed()
+
+    def _migrate_from_json_if_needed(self) -> None:
+        """One-time migration from legacy JSON files to SQLite."""
+        if not self.base_dir.exists():
+            return
+
+        json_files = list(self.base_dir.glob("*.json"))
+        if not json_files:
+            return
+
+        backup_dir = self.base_dir.parent / f"memory.backup.{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        try:
+            shutil.copytree(self.base_dir, backup_dir)
+            logger.info("Memory JSON backup created at %s", backup_dir)
+        except OSError as e:
+            logger.warning("Failed to backup memory JSON files: %s", e)
+
+        migrated = 0
+        for path in json_files:
+            if path.name.startswith("_"):
+                continue
+            try:
+                entries = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            for entry in entries:
+                try:
+                    insert_memory(
+                        session_id=entry.get("session_id", ""),
+                        memory_id=entry.get("memory_id", ""),
+                        memory_type=entry.get("memory_type", "unknown"),
+                        content=entry.get("content", ""),
+                        evidence_ids=entry.get("evidence_ids", []),
+                        source=entry.get("source", "supervisor_approved"),
+                        requires_user_confirmation=entry.get("requires_user_confirmation", False),
+                        confirmed=entry.get("confirmed", False),
+                        created_at=entry.get("created_at"),
+                    )
+                    migrated += 1
+                except Exception:
+                    logger.exception("Failed to migrate memory entry %s", entry.get("memory_id"))
+
+        # Rename directory to prevent re-migration
+        try:
+            self.base_dir.rename(self.base_dir.with_suffix(".migrated"))
+            logger.info("Migrated %d memory entries from JSON to SQLite", migrated)
+        except OSError as e:
+            logger.warning("Failed to rename memory dir after migration: %s", e)
 
     def write_from_reviews(
         self,
@@ -42,9 +101,7 @@ class MemoryStore:
         Rules for auto-write:
         - Claim passes supervisor review (APPROVED)
         - Claim type is FACT with confidence >= 0.8, or INFERENCE with confidence >= 0.85
-        - Not already in memory for this session
         """
-        # Build review lookup
         review_map: dict[str, SupervisorReview] = {
             r.claim_id: r for r in supervisor_reviews
         }
@@ -80,96 +137,36 @@ class MemoryStore:
         return memories
 
     def _save_session_memories(self, session_id: str, memories: list[MemoryWrite]) -> None:
-        """Persist memories to disk."""
-        path = self.base_dir / f"{session_id}.json"
-        existing = []
-        if path.exists():
-            try:
-                existing = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                existing = []
-
-        # Append new memories
+        """Persist memories to SQLite."""
         for mem in memories:
-            existing.append({
-                "memory_id": mem.memory_id,
-                "session_id": mem.session_id,
-                "memory_type": mem.memory_type,
-                "content": mem.content,
-                "evidence_ids": mem.evidence_ids,
-                "source": mem.source,
-                "confirmed": mem.confirmed,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
-
-        path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        # Update index
-        self._update_index(session_id, len(existing))
-
-    def _update_index(self, session_id: str, entry_count: int) -> None:
-        idx: dict = {}
-        if self._index_path.exists():
             try:
-                idx = json.loads(self._index_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                idx = {}
-
-        idx[session_id] = {
-            "entry_count": entry_count,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        self._index_path.write_text(json.dumps(idx, ensure_ascii=False, indent=2), encoding="utf-8")
+                insert_memory(
+                    session_id=mem.session_id,
+                    memory_id=mem.memory_id,
+                    memory_type=mem.memory_type,
+                    content=mem.content,
+                    evidence_ids=mem.evidence_ids,
+                    source=mem.source,
+                    requires_user_confirmation=mem.requires_user_confirmation,
+                    confirmed=mem.confirmed,
+                )
+            except Exception:
+                logger.exception("Failed to insert memory %s", mem.memory_id)
 
     def get(self, session_id: str) -> list[dict]:
         """Retrieve all memory entries for a session."""
-        path = self.base_dir / f"{session_id}.json"
-        if not path.exists():
-            return []
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return []
+        return get_memories_by_session(session_id)
 
     def update_entry(self, session_id: str, memory_id: str, updates: dict) -> bool:
         """Update a single memory entry's fields (e.g. confirmed status).
 
         Returns True if the entry was found and updated, False otherwise.
         """
-        path = self.base_dir / f"{session_id}.json"
-        if not path.exists():
-            return False
-        try:
-            entries = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return False
-
-        updated = False
-        for entry in entries:
-            if entry.get("memory_id") == memory_id:
-                entry.update(updates)
-                entry["updated_at"] = datetime.now(timezone.utc).isoformat()
-                updated = True
-                break
-
-        if updated:
-            path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        result = update_memory_entry(session_id, memory_id, updates)
+        if result:
             logger.info("Memory entry %s updated: %s", memory_id, updates)
-        return updated
+        return result
 
     def search(self, keyword: str, limit: int = 20) -> list[dict]:
-        """Simple keyword search across all memory entries (O(n) scan)."""
-        results = []
-        for path in sorted(self.base_dir.glob("*.json")):
-            if path.name.startswith("_"):
-                continue
-            try:
-                entries = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                continue
-            for entry in entries:
-                if keyword.lower() in entry.get("content", "").lower():
-                    results.append(entry)
-                    if len(results) >= limit:
-                        return results
-        return results
+        """Keyword search across all memory entries (SQL LIKE)."""
+        return search_memories(keyword, limit)
