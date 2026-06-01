@@ -17,6 +17,7 @@ from enum import Enum
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from roundtable.models import SessionStatus
 from roundtable.providers import ProviderRouter
 from roundtable.voice.asr_client import DashScopeASRClient
 from roundtable.voice.protocol import (
@@ -56,24 +57,30 @@ class VoiceSession:
     Args:
         frontend_ws: The FastAPI WebSocket connected to the client.
         provider: LLM provider (None = mock mode).
-        mode: "qa" for simple Q&A, "personal_roundtable" for anchored debate.
+        session_store: Optional store for evidence capture mode.
+        mode: "qa", "personal_roundtable", or "evidence".
         template: DecisionTemplate for personal_roundtable mode.
         context: Optional background context.
+        target_session_id: Existing Roundtable session for evidence capture.
     """
 
     def __init__(
         self,
         frontend_ws: WebSocket,
         provider=None,
+        session_store=None,
         mode: str = "qa",
         template: str = "general",
         context: Optional[str] = None,
+        target_session_id: Optional[str] = None,
     ):
         self.session_id = f"v_{uuid.uuid4().hex[:8]}"
         self.frontend_ws = frontend_ws
         self.mode = mode
         self.template = template
         self.context = context or ""
+        self.session_store = session_store
+        self.target_session_id = target_session_id
         self._user_provider = provider  # optional override
 
         self.state = VoiceSessionState.IDLE
@@ -172,7 +179,14 @@ class VoiceSession:
                 self.mode = msg.mode
                 self.template = msg.template
                 self.context = msg.context or ""
-                logger.info("[%s] Re-initialized: mode=%s, template=%s", self.session_id, self.mode, self.template)
+                self.target_session_id = msg.session_id or self.target_session_id
+                logger.info(
+                    "[%s] Re-initialized: mode=%s, template=%s, target_session_id=%s",
+                    self.session_id,
+                    self.mode,
+                    self.template,
+                    self.target_session_id,
+                )
                 await self._transition(VoiceSessionState.LISTENING)
 
             elif isinstance(msg, AudioMessage):
@@ -230,8 +244,28 @@ class VoiceSession:
         # Send final transcript to frontend
         await self._send(TranscriptFinalMessage(text=text, is_final=True))
 
+        if self.mode == "evidence":
+            await self._append_evidence_transcript(text)
+            await self._transition(VoiceSessionState.LISTENING)
+            return
+
         # Process through LLM
         await self._process_user_utterance(text)
+
+    async def _append_evidence_transcript(self, text: str) -> None:
+        """Append a final transcript sentence to an existing evidence session."""
+        if not self.session_store or not self.target_session_id:
+            return
+
+        session = self.session_store.get(self.target_session_id)
+        if not session:
+            await self._send(ErrorMessage(message="Target session not found for voice evidence"))
+            return
+
+        existing = list(self.session_store.get_evidence(self.target_session_id))
+        existing.append({"speaker": "Speaker", "text": text})
+        self.session_store.store_evidence(self.target_session_id, existing)
+        self.session_store.update_status(self.target_session_id, SessionStatus.TRANSCRIBING)
 
     async def _on_asr_error(self, error_msg: str) -> None:
         """Called when ASR encounters an error."""

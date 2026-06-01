@@ -58,14 +58,18 @@
   font-size:.9rem;font-weight:600;margin-bottom:3px;color:var(--text-1);
 }
 .voice-desc{font-size:.72rem;color:var(--text-2);line-height:1.55;margin-bottom:12px}
-.voice-drop{
-  border:1.5px dashed var(--border);border-radius:var(--radius);padding:16px;
-  background:var(--bg-elevated);cursor:pointer;transition:all .22s var(--ease);
+.record-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0 10px}
+.live-transcript{
+  min-height:86px;
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  background:var(--bg-elevated);
+  padding:12px;
+  white-space:pre-wrap;
+  color:var(--text-2);
+  font-size:.74rem;
+  line-height:1.6;
 }
-.voice-drop:hover,.voice-drop.drag-over{border-color:var(--accent-dim);background:var(--accent-soft)}
-.voice-file{font-size:.72rem;color:var(--text-2);font-family:var(--font-mono);margin-bottom:4px}
-.voice-limit{font-size:.64rem;color:var(--text-3)}
-.voice-ops{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
 .voice-status{
   font-size:.67rem;color:var(--text-2);padding:5px 10px;border-radius:16px;
   border:1px solid var(--border);background:var(--bg-card);font-family:var(--font-mono);
@@ -82,6 +86,8 @@
 .text-advanced.collapsed .text-advanced-body{display:none}
 .text-advanced.collapsed .toggle-arrow{transform:rotate(-90deg)}
 .toggle-arrow{font-size:.7rem;color:var(--text-3);transition:transform .2s var(--ease)}
+.quick-text-card{margin-bottom:14px}
+.plain-text-editor{min-height:180px}
 
 /* ═══════════════════════════════════════
    STEP 3 — TEAMS
@@ -185,4 +191,3 @@
 .interview-q-text{font-size:.88rem;color:var(--text-1);margin-bottom:10px;font-weight:500;line-height:1.5}
 .interview-answer{width:100%;min-height:80px;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;color:var(--text-1);font-family:var(--font-body);font-size:.82rem;resize:vertical;line-height:1.5}
 .interview-answer:focus{outline:none;border-color:var(--accent)}
-

@@ -39,9 +39,10 @@ class VoiceMessageType(str, Enum):
 class InitMessage(BaseModel):
     """Initialize a voice session with mode and template."""
     type: Literal["init"] = "init"
-    mode: str = "personal_roundtable"  # "personal_roundtable" | "meeting" | "qa"
+    mode: str = "personal_roundtable"  # "personal_roundtable" | "meeting" | "qa" | "evidence"
     template: str = "general"          # DecisionTemplate for personal_roundtable
     context: Optional[str] = None      # Optional background context
+    session_id: Optional[str] = None   # Existing Roundtable session for evidence capture
 
 
 class AudioMessage(BaseModel):

@@ -84,6 +84,21 @@ class TestEvidence:
         })
         assert r.status_code == 404
 
+    def test_upload_text_evidence(self):
+        r = client.post("/session/create", json={"title": "TXT Evidence"})
+        sid = r.json()["session_id"]
+        r2 = client.post("/evidence/text", json={
+            "session_id": sid,
+            "text": "张三：先上线 MVP\n没有说话人也要保留",
+        })
+        assert r2.status_code == 200
+        data = r2.json()
+        assert data["chunk_count"] == 2
+        assert data["segments"] == [
+            {"speaker": "张三", "text": "先上线 MVP"},
+            {"speaker": "Speaker", "text": "没有说话人也要保留"},
+        ]
+
 
 class TestRoundtable:
     def test_run(self):

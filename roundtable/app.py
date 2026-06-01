@@ -22,7 +22,7 @@ except PackageNotFoundError:
 
 import json as _json
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -160,6 +160,11 @@ class UploadEvidenceRequest(BaseModel):
     segments: list[dict]  # [{"speaker": "...", "text": "..."}]
 
 
+class UploadTextEvidenceRequest(BaseModel):
+    session_id: str
+    text: str
+
+
 class RunRoundtableRequest(BaseModel):
     session_id: str
     agent_count: int = 5
@@ -217,8 +222,52 @@ async def upload_evidence(req: UploadEvidenceRequest):
     }
 
 
+def _parse_text_segments(text: str) -> list[dict]:
+    """Parse plain text lines into evidence segments."""
+    segments: list[dict] = []
+    for line in text.splitlines():
+        value = line.strip()
+        if not value:
+            continue
+        if "：" in value:
+            speaker, content = value.split("：", 1)
+        elif ":" in value:
+            speaker, content = value.split(":", 1)
+        else:
+            speaker, content = "Speaker", value
+        speaker = speaker.strip() or "Speaker"
+        content = content.strip()
+        if content:
+            segments.append({"speaker": speaker[:64], "text": content})
+    return segments
+
+
+@app.post("/evidence/text")
+async def upload_text_evidence(req: UploadTextEvidenceRequest):
+    """Upload plain TXT evidence and persist normalized transcript segments."""
+    if not _store.get(req.session_id):
+        raise HTTPException(404, "Session not found — create a session first")
+
+    segments = _parse_text_segments(req.text)
+    if not segments:
+        raise HTTPException(400, "No text evidence found")
+    if len(segments) > 500:
+        raise HTTPException(400, "Too many segments (max 500)")
+
+    evidence = build_evidence_packet(req.session_id, "meeting", segments)
+    _store.store_evidence(req.session_id, segments)
+    _store.update_status(req.session_id, SessionStatus.TRANSCRIBING)
+
+    return {
+        "session_id": req.session_id,
+        "chunk_count": len(evidence.transcript_chunks),
+        "segments": segments,
+        "status": "text evidence stored — ready for /roundtable/run",
+    }
+
+
 @app.post("/speak")
-async def speak(audio: UploadFile = File(...)):
+async def speak(audio: UploadFile = File(...), session_id: str = Form(default="")):
     """Upload an audio file → transcribe via Whisper or MiMo → create session + evidence.
 
     Accepts: mp3, wav, m4a, ogg, webm
@@ -288,13 +337,17 @@ async def speak(audio: UploadFile = File(...)):
                 "filename": audio.filename,
             }
 
-        # Create session
-        title = audio.filename or "语音输入"
-        session = _store.create(
-            title=title,
-            mode="personal_roundtable",
-        )
-        sid = session.session_id
+        # Reuse the current frontend session when provided; otherwise create one.
+        existing = _store.get(session_id) if session_id else None
+        if existing:
+            sid = existing.session_id
+        else:
+            title = audio.filename or "语音输入"
+            session = _store.create(
+                title=title,
+                mode="personal_roundtable",
+            )
+            sid = session.session_id
 
         # Upload segments as evidence
         segments = [
@@ -759,6 +812,7 @@ async def voice_websocket(websocket: WebSocket):
 
             session = VoiceSession(
                 frontend_ws=websocket,
+                session_store=_store,
                 mode="qa",
                 template="general",
             )

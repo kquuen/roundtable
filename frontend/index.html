@@ -53,7 +53,7 @@
   <div class="main">
     <nav class="sidebar">
       <div class="step-item active" data-step="1" onclick="goStep(1)" role="button" tabindex="0" aria-label="Step 1: Create session"><span class="step-num">1</span><div><div class="step-label">创建会话</div><div class="step-desc">选择模式，命名</div></div></div>
-      <div class="step-item" data-step="2" onclick="goStep(2)" role="button" tabindex="0" aria-label="Step 2: Upload evidence"><span class="step-num">2</span><div><div class="step-label">上传证据</div><div class="step-desc">导入文本片段</div></div></div>
+      <div class="step-item" data-step="2" onclick="goStep(2)" role="button" tabindex="0" aria-label="Step 2: Input evidence"><span class="step-num">2</span><div><div class="step-label">输入证据</div><div class="step-desc">实时语音 / TXT</div></div></div>
       <div class="step-item" data-step="3" onclick="goStep(3)" role="button" tabindex="0" aria-label="Step 3: Expert team"><span class="step-num">3</span><div><div class="step-label">专家团队</div><div class="step-desc">推荐 + 雷达图</div></div></div>
       <div class="step-item" data-step="4" onclick="goStep(4)" role="button" tabindex="0" aria-label="Step 4: Run analysis"><span class="step-num">4</span><div><div class="step-label">运行分析</div><div class="step-desc">配置参数，启动</div></div></div>
       <div class="step-item" data-step="5" onclick="goStep(5)" role="button" tabindex="0" aria-label="Step 5: Review report"><span class="step-num">5</span><div><div class="step-label">审查报告</div><div class="step-desc">结论与统计</div></div></div>
@@ -68,10 +68,10 @@
         <h1 class="page-title">创建审查会话</h1>
         <p class="page-subtitle">选择模式并命名。每轮审查独立运行，从证据导入到报告生成。</p>
         <div class="create-grid">
-          <div class="mode-card selected" onclick="selectMode('meeting',this)" role="button" tabindex="0" aria-label="会议审查模式">
+          <div class="mode-card selected" onclick="selectMode('meeting',this)" role="button" tabindex="0" aria-label="会议圆桌模式">
             <span class="cloud-corner cloud-tl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 16C4 10 8 6 14 6C10 6 6 10 6 16"/><path d="M6 13C6 8.5 9 5 14 5"/></svg></span>
             <span class="cloud-corner cloud-br"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 16C4 10 8 6 14 6C10 6 6 10 6 16"/><path d="M6 13C6 8.5 9 5 14 5"/></svg></span>
-            <div class="mode-name">会议审查</div>
+            <div class="mode-name">会议圆桌</div>
             <div class="mode-desc">多人会议记录导入，多视角协作分析，生成结构化审查报告。</div>
           </div>
           <div class="mode-card" onclick="selectMode('personal_roundtable',this)" role="button" tabindex="0" aria-label="个人圆桌模式">
@@ -90,50 +90,44 @@
 
       <!-- PAGE 2 -->
       <div class="page" id="page2">
-        <h1 class="page-title">上传会议证据</h1>
-        <p class="page-subtitle">语音优先：上传音频自动转写并回填证据。文本 JSON 作为高级输入保留。</p>
+        <h1 class="page-title">输入会议证据</h1>
+        <p class="page-subtitle">实时语音和 TXT 文本作为默认入口，不需要提前准备文件或结构化数据。</p>
         <div class="voice-priority">
-          <div class="voice-title">语音输入（推荐）</div>
-          <div class="voice-desc">上传会议录音后将调用 Whisper 转写，自动生成结构化 segments，并直接写入当前会话。</div>
-          <div class="voice-drop" id="voiceDrop" onclick="document.getElementById('audioInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleAudioDrop(event)" role="button" tabindex="0" aria-label="Upload audio file">
-            <div class="voice-file" id="audioFileName">未选择音频文件</div>
-            <div class="voice-limit">支持 mp3 / wav / m4a / ogg / webm，最大 25MB（点击或拖拽上传）</div>
-            <input type="file" id="audioInput" accept=".mp3,.wav,.m4a,.ogg,.webm" style="display:none" onchange="handleAudioSelect(event)" aria-label="Select audio file">
+          <div class="voice-title">实时语音输入（推荐）</div>
+          <div class="voice-desc">点击开始后边说边转写，识别到的句子会自动进入下方文本证据。</div>
+          <div class="record-controls">
+            <button class="btn-primary" id="recordStartBtn" onclick="startRecordEvidence()">开始实时语音</button>
+            <button class="btn-secondary" id="recordStopBtn" onclick="stopRecordEvidence()" disabled>停止</button>
+            <span class="voice-status" id="recordStatus">未开始</span>
           </div>
-          <div class="voice-ops">
-            <button class="btn-primary" onclick="uploadAudioEvidence()">语音转写并写入证据</button>
-            <span class="voice-status" id="voiceStatus">等待上传</span>
+          <div class="live-transcript" id="liveTranscript">实时转写内容会显示在这里</div>
+        </div>
+        <div class="card quick-text-card">
+          <div class="card-header"><span class="card-title">TXT / 直接文本输入</span><span class="card-tag">Text</span></div>
+          <div class="editor-area">
+            <label for="plainTextEditor" class="sr-only">Plain text evidence editor</label>
+            <textarea class="transcript-editor plain-text-editor" id="plainTextEditor" placeholder="可直接粘贴会议内容，每行一句。\n示例：\n张三：我们先上线 MVP\n李四：本周补齐监控和回滚方案"></textarea>
+            <div class="segment-count" id="plainSegmentCount">0 段</div>
           </div>
+          <div class="editor-hint">支持 <code>姓名：内容</code> 或每行一句（未写姓名会自动标记为 Speaker）</div>
         </div>
         <div class="text-advanced collapsed" id="textAdvanced">
           <button class="text-advanced-toggle" onclick="toggleTextAdvanced()" aria-expanded="false">
-            <span>文本 JSON 输入（高级）</span>
+            <span>导入 TXT 文件</span>
             <span class="toggle-arrow">▼</span>
           </button>
           <div class="text-advanced-body">
-            <div class="drop-zone" id="jsonDrop" onclick="document.getElementById('fileInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleJsonDrop(event)" style="margin-bottom:14px" role="button" tabindex="0" aria-label="Upload JSON file">
+            <div class="drop-zone" id="txtDrop" onclick="document.getElementById('fileInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleTextDrop(event)" style="margin-bottom:14px" role="button" tabindex="0" aria-label="Upload TXT file">
               <div class="drop-zone-icon"> </div>
-              <div class="drop-zone-text">拖拽 JSON 文件到此处，或点击上传</div>
-              <div class="drop-zone-hint">{"segments": [{"speaker": "姓名", "text": "内容"}]}</div>
-              <input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFileUpload(event)" aria-label="Select JSON file">
-            </div>
-            <div class="card">
-              <div class="card-header"><span class="card-title">手动输入</span><span class="card-tag">JSON</span></div>
-              <div class="editor-area">
-                <label for="transcriptEditor" class="sr-only">Transcript editor</label>
-                <textarea class="transcript-editor" id="transcriptEditor" placeholder='[
-  {"speaker": "张三", "text": "我们决定先做文本导入功能"},
-  {"speaker": "李四", "text": "技术上用 FastAPI 加 Celery"}
-]'></textarea>
-                <div class="segment-count" id="segmentCount">0 段</div>
-              </div>
-              <div class="editor-hint">每段格式 <code>{"speaker": "名称", "text": "内容"}</code></div>
+              <div class="drop-zone-text">拖拽 TXT 文件到此处，或点击上传</div>
+              <div class="drop-zone-hint">每行一句；可写成“姓名：内容”</div>
+              <input type="file" id="fileInput" accept=".txt,text/plain" style="display:none" onchange="handleTextFileUpload(event)" aria-label="Select TXT file">
             </div>
           </div>
         </div>
         <div class="nav-buttons">
           <button class="btn-secondary" onclick="goStep(1)">← 上一步</button>
-          <button class="btn-primary" onclick="uploadEvidence()">使用文本证据继续 →</button>
+          <button class="btn-primary" onclick="uploadEvidence()">使用当前输入继续 →</button>
         </div>
       </div>
 

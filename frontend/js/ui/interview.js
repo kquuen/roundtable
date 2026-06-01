@@ -4,7 +4,8 @@
 async function fetchInterview(){
   showLoading('生成追问...');
   try{
-    const r=await fetch(API+'/roundtable/interview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.sessionId})});
+    const question=(typeof getPlainTextEvidence==='function'&&getPlainTextEvidence())||'请根据当前会议证据生成补充问题';
+    const r=await fetch(API+'/roundtable/interview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:question,template:'general'})});
     if(!r.ok){
       let msg='Interview failed';
       try{const e=await r.json();msg=e.detail||e.error||msg}catch{}
@@ -46,9 +47,11 @@ async function submitInterview(){
   }
   showLoading('提交补充信息...');
   try{
-    await fetch(API+'/evidence/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    const base=(typeof getPlainTextEvidence==='function'&&getPlainTextEvidence())||'';
+    const additions=answers.map(function(text,i){return text?'User：追问回答 '+(i+1)+': '+text:''}).filter(Boolean);
+    await fetch(API+'/evidence/text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       session_id:state.sessionId,
-      segments:answers.map(function(text,i){return{speaker:'User',text:'追问回答 '+(i+1)+': '+text}})
+      text:[base].concat(additions).filter(Boolean).join('\n')
     })});
     hideLoading();
     goStep(3);

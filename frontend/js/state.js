@@ -11,7 +11,14 @@ let state={
   reportMarkdown:'',
   analysisMode:'review',
   reportType:'review',
-  debateData:null
+  debateData:null,
+  recordStream:null,
+  voiceSocket:null,
+  voiceAudioContext:null,
+  voiceSource:null,
+  voiceProcessor:null,
+  voiceSeq:0,
+  liveSegments:[]
 };
 
 /* ═══ NAV ═══ */
