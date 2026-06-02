@@ -39,7 +39,7 @@ async function uploadEvidence(){
   if(segments.length>500){showToast('Too many segments (max 500)','error');return}
   showLoading('Uploading evidence...');
   try{
-    const r=await fetch(API+'/evidence/text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.sessionId,text:text})});
+    const r=await apiFetch(API+'/evidence/text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.sessionId,text:text})});
     if(!r.ok){
       let msg='Upload failed';
       try{const e=await r.json();msg=e.detail||e.error||msg}catch{}
@@ -48,7 +48,7 @@ async function uploadEvidence(){
     const evidence=await r.json();
     const storedSegments=evidence.segments||segments;
     showLoading('Analyzing content...');
-    const t=await fetch(API+'/team/recommend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.sessionId,segments:storedSegments})});
+    const t=await apiFetch(API+'/team/recommend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.sessionId,segments:storedSegments})});
     if(!t.ok){
       let msg='Team recommend failed';
       try{const e=await t.json();msg=e.detail||e.error||msg}catch{}
@@ -180,7 +180,8 @@ async function startRecordEvidence(){
     const socket=new WebSocket(buildVoiceSocketUrl());
     state.voiceSocket=socket;
     socket.onopen=function(){
-      socket.send(JSON.stringify({type:'init',mode:'evidence',template:'general',session_id:state.sessionId}));
+      const token=getToken();
+      socket.send(JSON.stringify({type:'init',mode:'evidence',template:'general',session_id:state.sessionId,token:token}));
     };
     socket.onmessage=function(event){
       let msg;

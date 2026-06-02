@@ -5,7 +5,7 @@ async function fetchInterview(){
   showLoading('生成追问...');
   try{
     const question=(typeof getPlainTextEvidence==='function'&&getPlainTextEvidence())||'请根据当前会议证据生成补充问题';
-    const r=await fetch(API+'/roundtable/interview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:question,template:'general'})});
+    const r=await apiFetch(API+'/roundtable/interview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:question,template:'general'})});
     if(!r.ok){
       let msg='Interview failed';
       try{const e=await r.json();msg=e.detail||e.error||msg}catch{}
@@ -49,7 +49,7 @@ async function submitInterview(){
   try{
     const base=(typeof getPlainTextEvidence==='function'&&getPlainTextEvidence())||'';
     const additions=answers.map(function(text,i){return text?'User：追问回答 '+(i+1)+': '+text:''}).filter(Boolean);
-    await fetch(API+'/evidence/text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    await apiFetch(API+'/evidence/text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       session_id:state.sessionId,
       text:[base].concat(additions).filter(Boolean).join('\n')
     })});

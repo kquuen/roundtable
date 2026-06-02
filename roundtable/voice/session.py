@@ -175,6 +175,13 @@ class VoiceSession:
                 continue
 
             if isinstance(msg, InitMessage):
+                # Authenticate if token provided
+                if msg.token:
+                    from roundtable.auth import _decode_token
+                    payload = _decode_token(msg.token)
+                    if not payload:
+                        await self._send(ErrorMessage(message="Authentication failed: invalid token"))
+                        break
                 # Re-configure session parameters
                 self.mode = msg.mode
                 self.template = msg.template

@@ -338,6 +338,53 @@ class ProviderRouter:
             return self.get(first_model)
         return MockProvider()
 
+    def get_for_user(self, model_ref: str, user) -> BaseLLMProvider:
+        """Resolve provider, preferring user's custom API key if available.
+
+        Bypasses cache to avoid key leakage between users.
+        """
+        if not user or not getattr(user, "custom_keys", None):
+            return self.get(model_ref)
+
+        if "/" not in model_ref:
+            return self.get(model_ref)
+
+        provider_id, model_id = model_ref.split("/", 1)
+        custom_key = (user.custom_keys or {}).get(provider_id)
+        if not custom_key:
+            return self.get(model_ref)
+
+        # Build provider with custom key (bypass cache)
+        from roundtable.config import ConfigManager
+
+        config = ConfigManager.get()
+        resolved = config.get_model_config(model_ref)
+        if resolved is None:
+            return MockProvider(provider_id=provider_id, model_id=model_id)
+
+        pconf, _ = resolved
+        protocol = pconf.protocol
+
+        if protocol == "openai":
+            return OpenAIProvider(
+                provider_id=provider_id,
+                model_id=model_id,
+                api_key=custom_key,
+                base_url=pconf.base_url,
+                timeout=float(pconf.timeout),
+            )
+
+        if protocol == "anthropic":
+            return AnthropicProvider(
+                provider_id=provider_id,
+                model_id=model_id,
+                api_key=custom_key,
+                base_url=pconf.base_url,
+                timeout=float(pconf.timeout),
+            )
+
+        return MockProvider(provider_id=provider_id, model_id=model_id)
+
 
 # ══════════════════════════════════════════════════════════════
 # Backward compatibility

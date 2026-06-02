@@ -76,7 +76,7 @@ async function runAnalysis(){
   try{
     const endpoint=state.analysisMode==='debate'?'/roundtable/debate':'/roundtable/run';
     const payload={session_id:state.sessionId,agent_count:ac,use_mock:um,lang:state.runLang,stream:true};
-    const r=await fetch(API+endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const r=await apiFetch(API+endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!r.ok){
       let msg='Request failed';
       try{const e=await r.json();msg=e.detail||e.error||msg}catch{}
@@ -123,7 +123,7 @@ function connectAnalysisStream(streamUrl,stopTicker){
     let finalData=null;
     var url=streamUrl;
     if(url.startsWith('/'))url=API+url;
-    const es=new EventSource(url);
+    const es=apiEventSource(url);
     const timeout=setTimeout(function(){
       es.close();
       reject(new Error('SSE connection timeout'));

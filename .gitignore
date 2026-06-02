@@ -20,3 +20,19 @@ reports/
 # Runtime data
 data/sessions/
 data/memory/
+
+# Database & backups
+data/backups/
+data/users/
+data/roundtable.db
+*.db
+
+# Migration artifacts
+data/memory.migrated/
+data/memory.backup.*/
+
+# Temporary / analysis docs at root
+IMPLEMENTATION_STATUS.md
+MVP_COMMERCIAL_LOOP.md
+NUWA_CUSTOMER_VOICE.md
+PROJECT_ANALYSIS.md

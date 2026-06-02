@@ -10,3 +10,66 @@ const API = window.location.port === '8000'
 const PIPE_IDS=['pipe-evidence','pipe-agents','pipe-review','pipe-memory','pipe-report'];
 const REVIEW_PIPELINE=['构建证据','分派','审查','记忆','报告'];
 const DEBATE_PIPELINE=['构建证据','Round 1','Round 2','共识','报告'];
+
+/* ═══════════════════════════════════════════
+   AUTH HELPERS
+   ═══════════════════════════════════════════ */
+
+function getToken() {
+  return localStorage.getItem('rt_token') || '';
+}
+
+function getUser() {
+  try {
+    return JSON.parse(localStorage.getItem('rt_user') || 'null');
+  } catch (e) {
+    return null;
+  }
+}
+
+function setToken(token, user) {
+  if (token) {
+    localStorage.setItem('rt_token', token);
+    localStorage.setItem('rt_user', JSON.stringify(user));
+  } else {
+    localStorage.removeItem('rt_token');
+    localStorage.removeItem('rt_user');
+  }
+}
+
+/**
+ * Unified fetch wrapper that injects Authorization header.
+ * On 401, triggers the login modal.
+ * Clones options to avoid mutating caller's object.
+ */
+async function apiFetch(url, options) {
+  const token = getToken();
+  const opts = {
+    ...(options || {}),
+    headers: {
+      ...((options && options.headers) || {}),
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+    },
+  };
+
+  const resp = await fetch(url, opts);
+  if (resp.status === 401) {
+    setToken(null, null);
+    if (typeof showAuthModal === 'function') {
+      showAuthModal();
+    }
+    const err = new Error('登录已过期，请重新登录');
+    err.status = 401;
+    throw err;
+  }
+  return resp;
+}
+
+/**
+ * Create an EventSource.
+ * The stream_url from backend already contains a one-time stream_key.
+ * No JWT is exposed in the URL.
+ */
+function apiEventSource(url) {
+  return new EventSource(url);
+}

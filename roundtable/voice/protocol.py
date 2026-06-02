@@ -43,6 +43,7 @@ class InitMessage(BaseModel):
     template: str = "general"          # DecisionTemplate for personal_roundtable
     context: Optional[str] = None      # Optional background context
     session_id: Optional[str] = None   # Existing Roundtable session for evidence capture
+    token: Optional[str] = None        # JWT token for authentication
 
 
 class AudioMessage(BaseModel):

@@ -8,7 +8,7 @@ async function createSession(){
   if(t.length>200){showToast('Title too long (max 200 chars)','error');return}
   showLoading('Creating session...');
   try{
-    const r=await fetch(API+'/session/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,mode:state.mode})});
+    const r=await apiFetch(API+'/session/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,mode:state.mode})});
     const d=await r.json();state.sessionId=d.session_id;
     document.getElementById('sessionId').textContent=d.session_id;document.getElementById('sessionStatus').textContent=d.status;
     hideLoading();goStep(2);
