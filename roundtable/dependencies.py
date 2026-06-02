@@ -12,7 +12,7 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException
 
-from roundtable.auth import User, require_user
+from roundtable.auth import User, require_user, get_current_user
 from roundtable.config import ConfigManager
 from roundtable.models import Session
 from roundtable.services import RoundtableService
@@ -48,15 +48,28 @@ def get_service() -> RoundtableService:
     )
 
 
+def _check_session_owner(session_id: str, user: Optional[User], store: SessionStore) -> Session:
+    """Synchronous session ownership check (for use inside endpoint bodies)."""
+    s = store.get(session_id)
+    if not s:
+        raise HTTPException(404, "Session not found")
+    if user:
+        if s.created_by != user.username:
+            raise HTTPException(404, "Session not found")
+    else:
+        # Anonymous users can only access sessions created by anonymous
+        if s.created_by != "anonymous":
+            raise HTTPException(404, "Session not found")
+    return s
+
+
 def require_session_owner(
     session_id: str,
-    user: User = Depends(require_user),
+    user: Optional[User] = Depends(get_current_user),
     store: SessionStore = Depends(get_store),
 ) -> Session:
-    s = store.get(session_id)
-    if not s or s.created_by != user.username:
-        raise HTTPException(404, "Session not found")
-    return s
+    """FastAPI dependency wrapper for session ownership check."""
+    return _check_session_owner(session_id, user, store)
 
 
 def llm_enabled() -> bool:

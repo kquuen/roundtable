@@ -261,6 +261,17 @@ class UserStore:
             is_admin=getattr(user, "is_admin", False),
         )
 
+    def change_password(self, user_id: str, old_password: str, new_password: str) -> bool:
+        """Change user password after verifying old password. Returns True on success."""
+        user = self.get_by_id(user_id)
+        if not user:
+            return False
+        if not _verify_password(old_password, user.hashed_password):
+            return False
+        from roundtable.db import update_user_password
+        update_user_password(user_id, _hash_password(new_password))
+        return True
+
     def _save(self) -> None:
         """Backward compatibility: no-op for SQLite (writes are immediate)."""
         pass
@@ -328,6 +339,7 @@ def ensure_admin_user() -> Optional[str]:
         update_user_custom_keys(user_id, custom_keys)
 
     token = _create_access_token(user_id, username)
+    logger.info("Admin account '%s' ready (user_id=%s). Token generated but not logged.", username, user_id)
     return token
 
 

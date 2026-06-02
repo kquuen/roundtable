@@ -62,6 +62,21 @@ async function apiFetch(url, options) {
     err.status = 401;
     throw err;
   }
+  if (resp.status === 429) {
+    var data;
+    try { data = await resp.json(); } catch (e) { data = {}; }
+    if (data && data.error === 'quota_exceeded') {
+      showToast('月度配额已用完，请升级套餐', 'warning', 5000);
+      if (typeof showUpgradeModal === 'function') showUpgradeModal(data);
+    } else if (data && data.error === 'rate_limited') {
+      showToast(data.message || '请求过于频繁，请稍后再试', 'warning', 3000);
+    } else {
+      showToast('请求过于频繁，请稍后再试', 'warning', 3000);
+    }
+    const err = new Error(data.message || '请求过于频繁');
+    err.status = 429;
+    throw err;
+  }
   return resp;
 }
 
@@ -73,3 +88,21 @@ async function apiFetch(url, options) {
 function apiEventSource(url) {
   return new EventSource(url);
 }
+
+/* ═══════════════════════════════════════════
+   MOBILE SIDEBAR
+   ═══════════════════════════════════════════ */
+
+function toggleMobileSidebar() {
+  var sb = document.querySelector('.sidebar');
+  if (sb) sb.classList.toggle('open');
+}
+
+// Close sidebar when clicking a step on mobile
+document.addEventListener('click', function(e) {
+  var sb = document.querySelector('.sidebar');
+  if (!sb || !sb.classList.contains('open')) return;
+  if (e.target.closest('.step-item')) {
+    sb.classList.remove('open');
+  }
+});

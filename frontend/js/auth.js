@@ -240,6 +240,7 @@ window.showUserDropdown = function(trigger) {
   dd.id = 'user-dropdown';
   dd.style.cssText = 'position:absolute;top:40px;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:0.5rem 0;min-width:140px;z-index:9999;box-shadow:var(--shadow-lg);';
   var items = '<div style="padding:0.5rem 1rem;cursor:pointer;color:var(--text-primary);" onclick="loadUserHistory();document.getElementById(\'user-dropdown\').remove();">我的会话</div>';
+  items += '<div style="padding:0.5rem 1rem;cursor:pointer;color:var(--text-primary);" onclick="showChangePasswordModal();document.getElementById(\'user-dropdown\').remove();">修改密码</div>';
   if (user && user.is_admin) {
     items += '<div style="padding:0.5rem 1rem;cursor:pointer;color:var(--accent);" onclick="goAdmin();document.getElementById(\'user-dropdown\').remove();">管理后台</div>';
   }
@@ -250,4 +251,62 @@ window.showUserDropdown = function(trigger) {
   document.addEventListener('click', function close(e) {
     if (!dd.contains(e.target) && e.target !== trigger) { dd.remove(); document.removeEventListener('click', close); }
   });
+};
+
+
+/* ═══════════════════════════════════════════
+   CHANGE PASSWORD
+   ═══════════════════════════════════════════ */
+
+window.showChangePasswordModal = function() {
+  var existing = document.getElementById('change-password-modal');
+  if (existing) existing.remove();
+  var modal = document.createElement('div');
+  modal.id = 'change-password-modal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;';
+  modal.innerHTML = '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1.5rem;max-width:360px;width:90%;">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">' +
+    '<h3 style="margin:0;color:var(--text-primary);">修改密码</h3>' +
+    '<button onclick="document.getElementById(\'change-password-modal\').remove()" style="background:none;border:none;color:var(--text-secondary);font-size:1.25rem;cursor:pointer;">✕</button></div>' +
+    '<div id="cp-error" style="color:var(--danger);font-size:0.875rem;margin-bottom:0.75rem;display:none;"></div>' +
+    '<div style="margin-bottom:0.75rem;">' +
+    '<label style="display:block;font-size:0.75rem;color:var(--text-secondary);margin-bottom:0.25rem;">旧密码</label>' +
+    '<input id="cp-old" type="password" style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);color:var(--text-primary);" placeholder="当前密码"></div>' +
+    '<div style="margin-bottom:0.75rem;">' +
+    '<label style="display:block;font-size:0.75rem;color:var(--text-secondary);margin-bottom:0.25rem;">新密码</label>' +
+    '<input id="cp-new" type="password" style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);color:var(--text-primary);" placeholder="至少6位"></div>' +
+    '<div style="margin-bottom:1rem;">' +
+    '<label style="display:block;font-size:0.75rem;color:var(--text-secondary);margin-bottom:0.25rem;">确认新密码</label>' +
+    '<input id="cp-confirm" type="password" style="width:100%;padding:0.5rem 0.75rem;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);color:var(--text-primary);" placeholder="再次输入"></div>' +
+    '<button onclick="submitChangePassword()" style="width:100%;padding:0.625rem;border:none;border-radius:var(--radius-md);background:var(--accent);color:#fff;font-weight:500;cursor:pointer;">确认修改</button>' +
+    '</div>';
+  document.body.appendChild(modal);
+};
+
+window.submitChangePassword = async function() {
+  var oldPw = document.getElementById('cp-old').value.trim();
+  var newPw = document.getElementById('cp-new').value.trim();
+  var confirmPw = document.getElementById('cp-confirm').value.trim();
+  var err = document.getElementById('cp-error');
+  if (!oldPw || !newPw) { err.textContent = '请填写密码'; err.style.display = 'block'; return; }
+  if (newPw.length < 6) { err.textContent = '新密码至少6位'; err.style.display = 'block'; return; }
+  if (newPw !== confirmPw) { err.textContent = '两次输入的新密码不一致'; err.style.display = 'block'; return; }
+  try {
+    var r = await apiFetch(API + '/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ old_password: oldPw, new_password: newPw })
+    });
+    if (!r.ok) {
+      var d = await r.json().catch(function(){ return { detail: '修改失败' }; });
+      err.textContent = d.detail || '修改失败';
+      err.style.display = 'block';
+      return;
+    }
+    document.getElementById('change-password-modal').remove();
+    showToast('密码已修改，请重新登录', 'success');
+    setTimeout(function() { setToken(null, null); updateAuthHeader(); showAuthModal(); }, 1500);
+  } catch (e) {
+    err.textContent = '网络错误，请重试';
+    err.style.display = 'block';
+  }
 };

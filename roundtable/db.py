@@ -385,6 +385,18 @@ def update_user_custom_keys(user_id: str, custom_keys: dict) -> None:
         conn.close()
 
 
+def update_user_password(user_id: str, hashed_password: str) -> None:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "UPDATE users SET hashed_password = ? WHERE user_id = ?",
+            (hashed_password, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def update_user_usage(user_id: str, monthly_used: int) -> None:
     conn = _get_conn()
     try:
@@ -1029,6 +1041,53 @@ def reset_monthly_usage(user_id: str, monthly_quota: int) -> None:
             (monthly_quota, datetime.now(timezone.utc).isoformat(), user_id),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def reset_monthly_usage_if_stale(user_id: str, monthly_quota: int, reset_threshold: str) -> bool:
+    """Atomically reset quota only if quota_reset_at is missing or older than threshold.
+
+    Returns True if a reset was performed.
+    """
+    conn = _get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE users SET monthly_used = 0, monthly_quota = ?, quota_reset_at = ? WHERE user_id = ? AND (quota_reset_at IS NULL OR quota_reset_at < ?)",
+            (monthly_quota, datetime.now(timezone.utc).isoformat(), user_id, reset_threshold),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def atomic_increment_usage(user_id: str, cost: int) -> tuple[int, int] | None:
+    """Atomically increment monthly_used inside a transaction.
+
+    Returns (new_monthly_used, monthly_quota) or None if user not found.
+    """
+    conn = _get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        cur = conn.execute(
+            "SELECT monthly_used, monthly_quota FROM users WHERE user_id = ?",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.execute("ROLLBACK")
+            return None
+        new_used = row["monthly_used"] + cost
+        conn.execute(
+            "UPDATE users SET monthly_used = ? WHERE user_id = ?",
+            (new_used, user_id),
+        )
+        conn.commit()
+        return new_used, row["monthly_quota"]
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
     finally:
         conn.close()
 

@@ -26,6 +26,11 @@ class ApiKeyUpdateRequest(BaseModel):
     key: str = Field(min_length=10, max_length=256)
 
 
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(min_length=6, max_length=128)
+    new_password: str = Field(min_length=6, max_length=128)
+
+
 @router.post("/register", status_code=201)
 async def auth_register(req: UserRegisterRequest):
     """Register a new user account."""
@@ -61,6 +66,15 @@ async def auth_login(req: UserLoginRequest):
 async def auth_me(user: User = Depends(require_user)):
     """Get current authenticated user."""
     return user.model_dump()
+
+
+@router.post("/change-password")
+async def auth_change_password(req: ChangePasswordRequest, user: User = Depends(require_user)):
+    """Change password (requires old password)."""
+    ok = get_user_store().change_password(user.user_id, req.old_password, req.new_password)
+    if not ok:
+        raise HTTPException(401, "旧密码不正确")
+    return {"status": "ok", "message": "密码已修改，请使用新密码重新登录"}
 
 
 # ── User sub-routes (mounted under /user) ──

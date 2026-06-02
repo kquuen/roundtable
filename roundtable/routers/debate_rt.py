@@ -11,10 +11,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from roundtable.auth import User, require_user
+from typing import Optional
+from roundtable.auth import User, require_user, get_current_user
 from roundtable.config import ConfigManager
 from roundtable.dependencies import require_session_owner
-from roundtable.billing import require_quota, consume_quota
+from roundtable.billing import require_quota, consume_quota, _check_quota_sync
 from roundtable.responses import Utf8JSONResponse
 from roundtable.services.sse import (
     start_sse_pipeline,
@@ -63,8 +64,10 @@ def _get_debate_provider(user=None):
 
 
 @router.post("/interview", response_class=Utf8JSONResponse)
-async def start_interview(req: InterviewStartRequest, user: User = Depends(require_quota)):
+async def start_interview(req: InterviewStartRequest, user: Optional[User] = Depends(get_current_user)):
     """追问阶段：用户提交问题后，系统返回2-3个追问。"""
+    if user:
+        user = _check_quota_sync(user, cost=1)
     session_id = f"rt_{_uuid.uuid4().hex}"
     try:
         from roundtable.models import DecisionTemplate
@@ -88,8 +91,10 @@ async def start_interview(req: InterviewStartRequest, user: User = Depends(requi
 
 
 @router.post("/quick", response_class=Utf8JSONResponse)
-async def quick_roundtable(req: QuickRequest, user: User = Depends(require_quota)):
+async def quick_roundtable(req: QuickRequest, user: Optional[User] = Depends(get_current_user)):
     """零门槛启动辩论（同步，等待完成后返回报告）。"""
+    if user:
+        user = _check_quota_sync(user, cost=1)
     session_id = f"rt_{_uuid.uuid4().hex}"
     from roundtable.debate import sanitize_user_bias, AnchoredDebateEngine
     from roundtable.report import compose_anchored_report

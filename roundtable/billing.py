@@ -70,12 +70,7 @@ def get_plan_limits(plan: str) -> dict:
 
 def _should_reset_quota(user: User) -> bool:
     """Check if monthly quota should be reset (new month)."""
-    # If quota_reset_at is missing or from a previous month, reset
-    store = get_user_store()
-    db_user = store.get_by_id(user.user_id)
-    if not db_user:
-        return False
-    reset_at_str = getattr(db_user, "quota_reset_at", None)
+    reset_at_str = getattr(user, "quota_reset_at", None)
     if not reset_at_str:
         return True
     try:
@@ -87,44 +82,42 @@ def _should_reset_quota(user: User) -> bool:
 
 
 def _maybe_reset_quota(user: User) -> User:
-    """Reset monthly usage if we've crossed into a new month."""
-    if _should_reset_quota(user):
-        limits = get_plan_limits(getattr(user, "plan", PlanTier.FREE.value))
-        db.reset_monthly_usage(user.user_id, limits["monthly_quota"])
-        # Refresh user object
-        store = get_user_store()
-        refreshed = store.get_by_id(user.user_id)
-        if refreshed:
-            return User(
-                user_id=refreshed.user_id,
-                username=refreshed.username,
-                email=refreshed.email,
-                created_at=refreshed.created_at,
-                custom_keys=refreshed.custom_keys,
-                monthly_quota=refreshed.monthly_quota,
-                monthly_used=0,
-                plan=getattr(refreshed, "plan", PlanTier.FREE.value),
-            )
+    """Reset monthly usage if we've crossed into a new month (atomic conditional update)."""
+    if not _should_reset_quota(user):
+        return user
+
+    limits = get_plan_limits(getattr(user, "plan", PlanTier.FREE.value))
+    # Atomic: only reset if another request hasn't already done it
+    now = datetime.now(timezone.utc)
+    first_day = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    was_reset = db.reset_monthly_usage_if_stale(
+        user.user_id, limits["monthly_quota"], first_day.isoformat()
+    )
+
+    # Refresh user object regardless (another thread may have reset it)
+    store = get_user_store()
+    refreshed = store.get_by_id(user.user_id)
+    if refreshed:
+        return User(
+            user_id=refreshed.user_id,
+            username=refreshed.username,
+            email=refreshed.email,
+            created_at=refreshed.created_at,
+            custom_keys=refreshed.custom_keys,
+            monthly_quota=refreshed.monthly_quota,
+            monthly_used=refreshed.monthly_used,
+            plan=getattr(refreshed, "plan", PlanTier.FREE.value),
+        )
     return user
 
 
 # ── Quota Check Dependency ──
 
-async def require_quota(
-    cost: int = 1,
-    user: User = Depends(require_user),
-) -> User:
-    """FastAPI dependency: enforce quota before expensive operations.
-
-    Args:
-        cost: How many quota units this operation consumes (default 1 = 1 session).
-    """
-    # Admin users bypass quota checks
+def _check_quota_sync(user: User, cost: int = 1) -> User:
+    """Synchronous quota check (for use inside endpoint bodies)."""
     if getattr(user, "is_admin", False):
         return user
-
     user = _maybe_reset_quota(user)
-
     remaining = user.monthly_quota - user.monthly_used
     if remaining < cost:
         logger.warning(
@@ -146,6 +139,18 @@ async def require_quota(
     return user
 
 
+async def require_quota(
+    cost: int = 1,
+    user: User = Depends(require_user),
+) -> User:
+    """FastAPI dependency: enforce quota before expensive operations.
+
+    Args:
+        cost: How many quota units this operation consumes (default 1 = 1 session).
+    """
+    return _check_quota_sync(user, cost)
+
+
 # ── Usage Consumption ──
 
 def consume_quota(user_id: str, cost: int = 1, action: str = "session",
@@ -163,8 +168,11 @@ def consume_quota(user_id: str, cost: int = 1, action: str = "session",
             f"Quota exceeded: used={user.monthly_used}, quota={user.monthly_quota}, "
             f"requested={cost}, remaining={remaining}"
         )
-    new_used = user.monthly_used + cost
-    db.update_user_usage(user_id, new_used)
+    # Atomic increment to avoid read-modify-write races
+    result = db.atomic_increment_usage(user_id, cost)
+    if result is None:
+        raise ValueError(f"User {user_id} not found during quota consumption")
+    new_used, monthly_quota = result
     db.insert_usage_log(
         user_id=user_id,
         action=action,
@@ -174,8 +182,8 @@ def consume_quota(user_id: str, cost: int = 1, action: str = "session",
     )
     return {
         "monthly_used": new_used,
-        "monthly_quota": user.monthly_quota,
-        "remaining": max(0, user.monthly_quota - new_used),
+        "monthly_quota": monthly_quota,
+        "remaining": max(0, monthly_quota - new_used),
     }
 
 

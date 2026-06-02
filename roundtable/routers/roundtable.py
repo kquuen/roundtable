@@ -7,11 +7,12 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from roundtable.auth import User, require_user
-from roundtable.dependencies import get_store, get_service, require_session_owner
+from typing import Optional
+from roundtable.auth import User, require_user, get_current_user
+from roundtable.dependencies import get_store, get_service, require_session_owner, _check_session_owner
 from roundtable.models import SessionStatus
 from roundtable.services.sse import start_sse_pipeline
-from roundtable.billing import require_quota, consume_quota
+from roundtable.billing import require_quota, consume_quota, _check_quota_sync
 
 logger = logging.getLogger("roundtable.routers.roundtable")
 router = APIRouter(prefix="/roundtable", tags=["roundtable"])
@@ -26,9 +27,11 @@ class RunRoundtableRequest(BaseModel):
 
 
 @router.post("/run")
-async def run_roundtable(req: RunRoundtableRequest, user: User = Depends(require_quota)):
+async def run_roundtable(req: RunRoundtableRequest, user: Optional[User] = Depends(get_current_user)):
     """Execute a full roundtable analysis using stored evidence."""
-    session = require_session_owner(req.session_id, user)
+    session = _check_session_owner(req.session_id, user, get_store())
+    if user:
+        user = _check_quota_sync(user, cost=1)
 
     segments = get_store().get_evidence(req.session_id) or []
     get_store().update_status(req.session_id, SessionStatus.ANALYZING)
@@ -70,7 +73,8 @@ async def run_roundtable(req: RunRoundtableRequest, user: User = Depends(require
         agent_count=req.agent_count,
         lang=req.lang,
     )
-    consume_quota(user.user_id, cost=1, action="roundtable_run", session_id=req.session_id, tokens_used=0)
+    if user:
+        consume_quota(user.user_id, cost=1, action="roundtable_run", session_id=req.session_id, tokens_used=0)
 
     if result.pending_confirmation_count > 0:
         get_store().update_status(req.session_id, SessionStatus.REVIEWING)
@@ -90,9 +94,11 @@ async def run_roundtable(req: RunRoundtableRequest, user: User = Depends(require
 
 
 @router.post("/debate")
-async def run_debate(req: RunRoundtableRequest, user: User = Depends(require_quota)):
+async def run_debate(req: RunRoundtableRequest, user: Optional[User] = Depends(get_current_user)):
     """Execute a two-round debate analysis."""
-    session = require_session_owner(req.session_id, user)
+    session = _check_session_owner(req.session_id, user, get_store())
+    if user:
+        user = _check_quota_sync(user, cost=1)
 
     segments = get_store().get_evidence(req.session_id) or []
     get_store().update_status(req.session_id, SessionStatus.ANALYZING)

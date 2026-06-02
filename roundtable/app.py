@@ -91,10 +91,7 @@ async def lifespan(app: FastAPI):
         from roundtable.auth import ensure_admin_user
         admin_token = ensure_admin_user()
         if admin_token:
-            logger.info(
-                "Admin account ready. Pre-generated token (first 20 chars): %s...",
-                admin_token[:20],
-            )
+            logger.info("Admin account ready.")
     except Exception as e:
         logger.warning("Admin pre-seed failed: %s", e)
 
@@ -135,6 +132,11 @@ app.add_middleware(
 )
 
 app.middleware("http")(request_id_middleware)
+
+# Rate limiting (memory-based, per-IP)
+from roundtable.rate_limit import RateLimitMiddleware
+app.add_middleware(RateLimitMiddleware)
+
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)

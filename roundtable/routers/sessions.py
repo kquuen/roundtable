@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel, Field
 
-from roundtable.auth import User, require_user
+from roundtable.auth import User, require_user, get_current_user
 from roundtable.dependencies import get_store, get_reports, require_session_owner
 from roundtable.billing import require_quota, consume_quota, require_export_permission
 from roundtable.export import generate_pdf_report
@@ -41,10 +41,16 @@ class UploadTextEvidenceRequest(BaseModel):
 
 
 @router.post("/session/create", status_code=201)
-async def create_session(req: CreateSessionRequest, user: User = Depends(require_quota)):
-    """Create a new analysis session (persisted to disk)."""
-    session = get_store().create(title=req.title, mode=req.mode, created_by=user.username if user else "anonymous")
-    consume_quota(user.user_id, cost=1, action="create_session", session_id=session.session_id)
+async def create_session(req: CreateSessionRequest, user: Optional[User] = Depends(get_current_user)):
+    """Create a new analysis session (persisted to disk).
+
+    Anonymous users may create sessions without quota consumption.
+    Authenticated users consume 1 quota unit.
+    """
+    created_by = user.username if user else "anonymous"
+    session = get_store().create(title=req.title, mode=req.mode, created_by=created_by)
+    if user:
+        consume_quota(user.user_id, cost=1, action="create_session", session_id=session.session_id)
     return session.model_dump()
 
 
