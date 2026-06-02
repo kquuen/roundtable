@@ -91,3 +91,7 @@ websockets==16.0
     # via
     #   roundtable (pyproject.toml)
     #   uvicorn
+pyjwt>=2.8.0
+    # via roundtable (pyproject.toml)
+bcrypt>=4.1.0
+    # via roundtable (pyproject.toml)
