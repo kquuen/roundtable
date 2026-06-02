@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     voice_max_concurrent: int = 50
     admin_token: str = ""
 
+    # ── Pre-seeded API keys for admin account ──
+    xiaomi_api_key: str = ""
+    deepseek_api_key: str = ""
+
     # ── Feature flags ──
     debug: bool = False
 

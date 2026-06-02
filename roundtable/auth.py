@@ -282,9 +282,14 @@ def get_user_store() -> UserStore:
 def ensure_admin_user() -> Optional[str]:
     """If ADMIN_USERNAME and ADMIN_PASSWORD are set, ensure the user exists.
 
+    Also auto-injects pre-configured API keys (XIAOMI_API_KEY / DEEPSEEK_API_KEY)
+    into the admin user's custom_keys so they override system-level defaults.
+
     Returns the JWT access token for the pre-seeded admin, or None if not configured.
     """
     from roundtable.settings import get_settings
+    from roundtable.db import update_user_custom_keys
+
     settings = get_settings()
     username = settings.admin_username.strip().lower()
     password = settings.admin_password
@@ -310,6 +315,17 @@ def ensure_admin_user() -> Optional[str]:
     else:
         user_id = user.user_id
         logger.info("Pre-seeded admin user '%s' already exists (user_id=%s)", username, user_id)
+
+    # Inject pre-configured API keys into admin's custom_keys
+    custom_keys: dict[str, str] = {}
+    if settings.xiaomi_api_key:
+        custom_keys["xiaomi"] = settings.xiaomi_api_key
+        logger.info("Injected Xiaomi API key into admin custom_keys")
+    if settings.deepseek_api_key:
+        custom_keys["deepseek"] = settings.deepseek_api_key
+        logger.info("Injected DeepSeek API key into admin custom_keys")
+    if custom_keys:
+        update_user_custom_keys(user_id, custom_keys)
 
     token = _create_access_token(user_id, username)
     return token
