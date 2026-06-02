@@ -236,3 +236,47 @@ async def recommend_team(req: UploadEvidenceRequest, user: User = Depends(requir
             for t in teams
         ],
     }
+
+
+# ── V2 Debate Events & Interrupts ──
+
+class InterruptRequest(BaseModel):
+    session_id: str
+    interrupt_type: str = Field(default="question", description="question | rebuttal | clarify | deep_dive")
+    target_agent_id: str = Field(default="", description="Optional agent to respond")
+    content: str = Field(min_length=1, max_length=2000)
+
+
+@router.get("/session/{session_id}/events")
+async def get_session_events(session_id: str, limit: int = 500, user: User = Depends(require_user)):
+    """Playback debate events for a session (time-ordered)."""
+    require_session_owner(session_id, user)
+    events = db.get_debate_events(session_id, limit=limit)
+    return {
+        "session_id": session_id,
+        "events": events,
+        "count": len(events),
+    }
+
+
+@router.post("/session/{session_id}/interrupt")
+async def post_interrupt(session_id: str, req: InterruptRequest, user: User = Depends(require_user)):
+    """User interrupts the debate — target agent must respond."""
+    require_session_owner(session_id, user)
+    if req.session_id != session_id:
+        raise HTTPException(400, "session_id mismatch")
+
+    from roundtable.debate_v2 import DebateEngineV2
+    engine = DebateEngineV2()
+    interrupt = await engine.handle_interrupt(
+        session_id=session_id,
+        user_id=user.username,
+        interrupt_type=req.interrupt_type,
+        content=req.content,
+        target_agent_id=req.target_agent_id or None,
+    )
+    return {
+        "interrupt_id": interrupt.interrupt_id,
+        "session_id": session_id,
+        "status": "recorded",
+    }

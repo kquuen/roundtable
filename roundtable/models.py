@@ -162,6 +162,90 @@ class DebateSession(BaseModel):
     )
 
 
+# ── Structured Debate V2 Models ──
+
+class DebateStepType(str, Enum):
+    """四步结构化辩论的每一步类型。"""
+    STATEMENT = "statement"       # Step 1: 开场陈述
+    CHALLENGE = "challenge"       # Step 2: 强制质疑
+    NEW_PERSPECTIVE = "new_perspective"  # Step 3: 补充新视角
+    RESPONSE = "response"         # Step 4a: 回应
+    CORRECTION = "correction"     # Step 4b: 修正
+    CONSENSUS = "consensus"       # Step 4c: 共识收敛
+    USER_INTERRUPT = "user_interrupt"    # 用户插话
+
+
+class AgreementLevel(str, Enum):
+    """共识强度分级。"""
+    STRONG_CONSENSUS = "strong_consensus"      # 3+/3 同意
+    PARTIAL_CONSENSUS = "partial_consensus"    # 2/3 或多数同意
+    DIVIDED = "divided"                        # 明显分歧
+    IRRECONCILABLE = "irreconcilable"          # 不可调和
+    UNKNOWN = "unknown"
+
+
+class DebateStep(BaseModel):
+    """单个辩论步骤（持久化到 debate_steps 表）。"""
+    step_id: str
+    group_id: str
+    step_number: int = Field(ge=1, le=4)
+    agent_id: str
+    step_type: DebateStepType
+    content: str
+    content_struct: dict = Field(default_factory=dict, description="结构化输出字段")
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    hallucination_flags: List[dict] = Field(default_factory=list)
+    sources: List[str] = Field(default_factory=list, description="数据来源引用")
+    created_at: Optional[datetime] = None
+
+
+class DebateEvent(BaseModel):
+    """辩论事件流（用于回放，持久化到 debate_events 表）。"""
+    event_id: Optional[int] = None
+    session_id: str
+    event_type: str  # round_start | agent_thinking | agent_done | user_interrupt | supervisor_start | report_ready
+    agent_id: Optional[str] = None
+    content: str = ""
+    sequence_num: int = 0
+    metadata: dict = Field(default_factory=dict)
+    created_at: Optional[datetime] = None
+
+
+class UserInterrupt(BaseModel):
+    """用户插话记录（持久化到 user_interrupts 表）。"""
+    interrupt_id: str
+    session_id: str
+    user_id: str
+    interrupt_type: str = Field(default="question", description="question | rebuttal | clarify | deep_dive")
+    target_agent_id: Optional[str] = None
+    content: str
+    timestamp: datetime
+
+
+class ConsensusSnapshot(BaseModel):
+    """共识快照（持久化到 consensus_snapshots 表）。"""
+    snapshot_id: str
+    session_id: str
+    group_id: Optional[str] = None
+    step_id: Optional[str] = None
+    dimension_scores: dict = Field(default_factory=dict, description="维度 → 评分")
+    agreement_level: AgreementLevel = Field(default=AgreementLevel.UNKNOWN)
+    consensus_text: str = ""
+    created_at: Optional[datetime] = None
+
+
+class StructuredDebateResult(BaseModel):
+    """V2 四步辩论的完整结果。"""
+    session_id: str
+    groups: List[AgentGroup] = Field(default_factory=list)
+    steps: List[DebateStep] = Field(default_factory=list)
+    events: List[DebateEvent] = Field(default_factory=list)
+    interrupts: List[UserInterrupt] = Field(default_factory=list)
+    snapshots: List[ConsensusSnapshot] = Field(default_factory=list)
+    final_consensus: dict = Field(default_factory=dict)
+    conflicts: List[dict] = Field(default_factory=list)
+
+
 # ── Domain Configuration ──
 
 class DomainConfig(BaseModel):

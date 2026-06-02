@@ -123,3 +123,83 @@ async def run_debate(req: RunRoundtableRequest, user: User = Depends(require_use
 
     get_store().update_status(req.session_id, SessionStatus.COMPLETED)
     return result
+
+
+# ── V2 Structured Debate ──
+
+class DebateV2Request(BaseModel):
+    session_id: str
+    stream: bool = False
+
+
+@router.post("/debate-v2")
+async def run_debate_v2(req: DebateV2Request, user: User = Depends(require_user)):
+    """Execute a 4-step structured debate (Phase 2).
+
+    Requires groups to be confirmed via /agents/confirm-group first.
+    """
+    from roundtable.debate_v2 import DebateEngineV2
+    from roundtable.evidence import build_evidence_packet
+    from roundtable.agent_matcher import get_matcher, AgentGroup, AgentManifest
+    from roundtable.routers.agents import _SESSION_GROUPS
+
+    session = require_session_owner(req.session_id, user)
+    segments = get_store().get_evidence(req.session_id) or []
+    evidence = build_evidence_packet(req.session_id, session.mode, segments)
+
+    # Retrieve confirmed groups
+    group_data = _SESSION_GROUPS.get(req.session_id)
+    if not group_data:
+        raise HTTPException(400, "No groups confirmed for this session. Call /agents/confirm-group first.")
+
+    # Build AgentGroup objects from registry
+    matcher = get_matcher()
+    groups: list[AgentGroup] = []
+    for g in group_data.get("groups", []):
+        agents = [matcher.registry.get(aid) for aid in g.get("agents", [])]
+        agents = [a for a in agents if a is not None]
+        if agents:
+            groups.append(AgentGroup(
+                group_id=g.get("group_id", "g_001"),
+                group_name=g.get("group_name", ""),
+                topic=g.get("topic", ""),
+                agents=agents,
+            ))
+
+    if not groups:
+        # Fallback: use matched agents from /agents/match result stored in group selections
+        raise HTTPException(400, "No valid agent groups found. Please confirm groups first.")
+
+    engine = DebateEngineV2()
+
+    if req.stream:
+        async def _run_fn(queue):
+            result = await engine.run(
+                session_id=req.session_id,
+                evidence=evidence,
+                groups=groups,
+                event_queue=queue,
+            )
+            get_store().update_status(req.session_id, SessionStatus.COMPLETED)
+            return {
+                "session_id": result.session_id,
+                "steps_count": len(result.steps),
+                "groups_count": len(result.groups),
+                "snapshots_count": len(result.snapshots),
+                "final_consensus": result.final_consensus,
+            }
+        return await start_sse_pipeline(req.session_id, _run_fn, None)
+
+    result = await engine.run(
+        session_id=req.session_id,
+        evidence=evidence,
+        groups=groups,
+    )
+    get_store().update_status(req.session_id, SessionStatus.COMPLETED)
+    return {
+        "session_id": result.session_id,
+        "steps": [s.model_dump() for s in result.steps],
+        "snapshots": [s.model_dump() for s in result.snapshots],
+        "events": [e.model_dump() for e in result.events],
+        "final_consensus": result.final_consensus,
+    }

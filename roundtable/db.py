@@ -175,6 +175,75 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         );
 
         CREATE INDEX IF NOT EXISTS idx_agents_active ON agents(is_active);
+
+        CREATE TABLE IF NOT EXISTS debate_groups (
+            group_id    TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            group_name  TEXT NOT NULL DEFAULT '',
+            topic       TEXT NOT NULL DEFAULT '',
+            agent_ids_json TEXT NOT NULL DEFAULT '[]',
+            status      TEXT NOT NULL DEFAULT 'pending',
+            created_at  TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS debate_steps (
+            step_id     TEXT PRIMARY KEY,
+            group_id    TEXT NOT NULL,
+            step_number INTEGER NOT NULL,
+            agent_id    TEXT NOT NULL,
+            step_type   TEXT NOT NULL DEFAULT 'statement',
+            content     TEXT NOT NULL DEFAULT '',
+            content_json TEXT NOT NULL DEFAULT '{}',
+            confidence  REAL NOT NULL DEFAULT 0.5,
+            hallucination_flags_json TEXT NOT NULL DEFAULT '[]',
+            sources_json TEXT NOT NULL DEFAULT '[]',
+            created_at  TEXT NOT NULL,
+            FOREIGN KEY (group_id) REFERENCES debate_groups(group_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS debate_events (
+            event_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id  TEXT NOT NULL,
+            event_type  TEXT NOT NULL,
+            agent_id    TEXT,
+            content     TEXT NOT NULL DEFAULT '',
+            sequence_num INTEGER NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at  TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS user_interrupts (
+            interrupt_id TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            user_id     TEXT NOT NULL,
+            interrupt_type TEXT NOT NULL DEFAULT 'question',
+            target_agent_id TEXT,
+            content     TEXT NOT NULL,
+            timestamp   TEXT NOT NULL,
+            created_at  TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS consensus_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            group_id    TEXT,
+            step_id     TEXT,
+            dimension_scores_json TEXT NOT NULL DEFAULT '{}',
+            agreement_level TEXT NOT NULL DEFAULT 'unknown',
+            consensus_text TEXT NOT NULL DEFAULT '',
+            created_at  TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_debate_groups_session ON debate_groups(session_id);
+        CREATE INDEX IF NOT EXISTS idx_debate_steps_group ON debate_steps(group_id);
+        CREATE INDEX IF NOT EXISTS idx_debate_events_session ON debate_events(session_id);
+        CREATE INDEX IF NOT EXISTS idx_debate_events_seq ON debate_events(session_id, sequence_num);
+        CREATE INDEX IF NOT EXISTS idx_interrupts_session ON user_interrupts(session_id);
+        CREATE INDEX IF NOT EXISTS idx_consensus_session ON consensus_snapshots(session_id);
         """
     )
     conn.commit()
@@ -491,6 +560,206 @@ def get_agent(agent_id: str) -> dict | None:
     finally:
         conn.close()
 
+
+# ── Debate Groups CRUD ──
+
+def insert_debate_group(group_id: str, session_id: str, group_name: str, topic: str,
+                        agent_ids: list[str], status: str = "pending") -> None:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """INSERT INTO debate_groups (group_id, session_id, group_name, topic, agent_ids_json, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (group_id, session_id, group_name, topic, _to_json(agent_ids), status,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_debate_groups(session_id: str) -> list[dict]:
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM debate_groups WHERE session_id = ? ORDER BY created_at",
+            (session_id,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["agent_ids"] = _from_json(d.pop("agent_ids_json", "[]"), [])
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+def update_debate_group_status(group_id: str, status: str) -> None:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "UPDATE debate_groups SET status = ? WHERE group_id = ?",
+            (status, group_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Debate Steps CRUD ──
+
+def insert_debate_step(step_id: str, group_id: str, step_number: int, agent_id: str,
+                       step_type: str, content: str, content_struct: dict | None = None,
+                       confidence: float = 0.5, hallucination_flags: list | None = None,
+                       sources: list | None = None) -> None:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """INSERT INTO debate_steps (step_id, group_id, step_number, agent_id, step_type,
+                 content, content_json, confidence, hallucination_flags_json, sources_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (step_id, group_id, step_number, agent_id, step_type, content,
+             _to_json(content_struct or {}), confidence,
+             _to_json(hallucination_flags or []), _to_json(sources or []),
+             datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_debate_steps(group_id: str) -> list[dict]:
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT * FROM debate_steps WHERE group_id = ? ORDER BY step_number, created_at""",
+            (group_id,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["content_struct"] = _from_json(d.pop("content_json", "{}"), {})
+            d["hallucination_flags"] = _from_json(d.pop("hallucination_flags_json", "[]"), [])
+            d["sources"] = _from_json(d.pop("sources_json", "[]"), [])
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+# ── Debate Events CRUD ──
+
+_next_sequence: dict[str, int] = {}
+
+def insert_debate_event(session_id: str, event_type: str, agent_id: str | None,
+                        content: str, metadata: dict | None = None) -> int:
+    conn = _get_conn()
+    try:
+        seq = _next_sequence.get(session_id, 0) + 1
+        _next_sequence[session_id] = seq
+        cur = conn.execute(
+            """INSERT INTO debate_events (session_id, event_type, agent_id, content, sequence_num, metadata_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (session_id, event_type, agent_id, content, seq, _to_json(metadata or {}),
+             datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+        return cur.lastrowid or seq
+    finally:
+        conn.close()
+
+
+def get_debate_events(session_id: str, limit: int = 500) -> list[dict]:
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT * FROM debate_events WHERE session_id = ? ORDER BY sequence_num LIMIT ?""",
+            (session_id, limit),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["metadata"] = _from_json(d.pop("metadata_json", "{}"), {})
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+def reset_sequence(session_id: str) -> None:
+    _next_sequence.pop(session_id, None)
+
+
+# ── User Interrupts CRUD ──
+
+def insert_user_interrupt(interrupt_id: str, session_id: str, user_id: str,
+                          interrupt_type: str, target_agent_id: str | None,
+                          content: str, timestamp: str) -> None:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """INSERT INTO user_interrupts (interrupt_id, session_id, user_id, interrupt_type,
+                 target_agent_id, content, timestamp, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (interrupt_id, session_id, user_id, interrupt_type, target_agent_id,
+             content, timestamp, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_user_interrupts(session_id: str) -> list[dict]:
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM user_interrupts WHERE session_id = ? ORDER BY created_at",
+            (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ── Consensus Snapshots CRUD ──
+
+def insert_consensus_snapshot(snapshot_id: str, session_id: str, group_id: str | None,
+                              step_id: str | None, dimension_scores: dict,
+                              agreement_level: str, consensus_text: str) -> None:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """INSERT INTO consensus_snapshots (snapshot_id, session_id, group_id, step_id,
+                 dimension_scores_json, agreement_level, consensus_text, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (snapshot_id, session_id, group_id, step_id,
+             _to_json(dimension_scores), agreement_level, consensus_text,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_consensus_snapshots(session_id: str) -> list[dict]:
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM consensus_snapshots WHERE session_id = ? ORDER BY created_at",
+            (session_id,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["dimension_scores"] = _from_json(d.pop("dimension_scores_json", "{}"), {})
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+# ── Users CRUD ──
 
 def list_all_users() -> list[dict]:
     conn = _get_conn()
