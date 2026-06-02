@@ -1,6 +1,6 @@
 [project]
 name = "roundtable"
-version = "0.2.0"
+version = "0.3.0"
 description = "圆桌会议 (Roundtable Meeting) — AI 专家圆桌工作台后端"
 requires-python = ">=3.11"
 dependencies = [
