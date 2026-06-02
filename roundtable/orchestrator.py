@@ -129,16 +129,28 @@ async def run_orchestrator_async(
     logger.info("Dispatching %d agents concurrently (timeout=%ds, domain=%s)", len(selected), timeout, domain_name or "default")
 
     async def _run_one(agent) -> AgentReview:
+        from roundtable.sentinel import get_circuit_breaker
+        breaker = get_circuit_breaker(agent.agent_id)
+
+        if not breaker.can_execute():
+            logger.warning("Agent %s circuit breaker OPEN, using mock fallback", agent.agent_id)
+            return agent.analyze(evidence)
+
         try:
             if agent.provider is not None:
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     agent.analyze_async(evidence, budget=budget),
                     timeout=timeout,
                 )
+                breaker.record_success()
+                return result
             # Mock path: synchronous keyword-based analysis
-            return agent.analyze(evidence)
+            result = agent.analyze(evidence)
+            breaker.record_success()
+            return result
         except asyncio.TimeoutError:
             logger.warning("Agent %s timed out after %ds", agent.agent_id, timeout)
+            breaker.record_failure()
             return AgentReview(
                 agent_id=agent.agent_id,
                 summary=f"[超时] {agent.skill.name} 在 {timeout}s 内未完成分析",
@@ -148,6 +160,7 @@ async def run_orchestrator_async(
             )
         except Exception as e:
             logger.error("Agent %s failed: %s", agent.agent_id, e)
+            breaker.record_failure()
             return AgentReview(
                 agent_id=agent.agent_id,
                 summary=f"[错误] {agent.skill.name} 分析失败：{e}",

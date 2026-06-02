@@ -66,6 +66,9 @@ def review_claims(
     """
     reviews = _review_all_claims(agent_reviews, evidence, mode, agent_forbidden)
 
+    # Hallucination detection
+    _run_hallucination_checks(agent_reviews, evidence, agent_forbidden)
+
     # Cross-agent contradiction detection (LLM-based if provider available)
     if provider is not None and len(reviews) >= 2:
         try:
@@ -93,6 +96,9 @@ async def review_claims_async(
 ) -> list[SupervisorReview]:
     """异步版本：直接 await 矛盾检测，不再嵌套 asyncio.run()。"""
     reviews = _review_all_claims(agent_reviews, evidence, mode, agent_forbidden)
+
+    # Hallucination detection
+    _run_hallucination_checks(agent_reviews, evidence, agent_forbidden)
 
     if provider is not None and len(reviews) >= 2:
         try:
@@ -531,6 +537,20 @@ def _get_claim_agent(claim_id: str, agent_reviews: list[AgentReview]) -> str:
             if c.claim_id == claim_id:
                 return ar.agent_id
     return ""
+
+
+def _run_hallucination_checks(
+    agent_reviews: list[AgentReview],
+    evidence: EvidencePacket,
+    agent_forbidden: dict[str, list[str]] | None,
+) -> None:
+    """Run hallucination detector on all claims."""
+    from roundtable.sentinel import HallucinationDetector
+    detector = HallucinationDetector()
+    for ar in agent_reviews:
+        forbidden = (agent_forbidden or {}).get(ar.agent_id, [])
+        for claim in ar.claims:
+            detector.check_claim(claim, forbidden, evidence.session_id)
 
 
 def summarize_review(reviews: list[SupervisorReview]) -> dict:

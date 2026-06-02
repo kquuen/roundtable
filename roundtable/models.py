@@ -246,6 +246,49 @@ class StructuredDebateResult(BaseModel):
     conflicts: List[dict] = Field(default_factory=list)
 
 
+# ── Sentinel / Health ──
+
+class CircuitState(str, Enum):
+    CLOSED = "closed"      # Normal operation
+    OPEN = "open"          # Failing fast
+    HALF_OPEN = "half_open"  # Testing recovery
+
+
+class AgentHealth(BaseModel):
+    """Agent health record (persisted to agent_health table)."""
+    agent_id: str
+    status: str = Field(default="healthy", description="healthy | degraded | unhealthy")
+    failure_count: int = 0
+    success_count: int = 0
+    circuit_state: CircuitState = Field(default=CircuitState.CLOSED)
+    total_hallucinations: int = 0
+    avg_confidence: float = 0.0
+    last_failure_at: Optional[datetime] = None
+    last_success_at: Optional[datetime] = None
+
+
+class SentinelAlertType(str, Enum):
+    BOUNDARY_VIOLATION = "boundary_violation"
+    HALLUCINATION = "hallucination"
+    TIMEOUT = "timeout"
+    REPETITION = "repetition"
+    CIRCUIT_OPEN = "circuit_open"
+
+
+class SentinelAlert(BaseModel):
+    """Sentinel alert record (persisted to sentinel_alerts table)."""
+    alert_id: str
+    session_id: str
+    alert_type: SentinelAlertType
+    severity: str = Field(default="low", description="low | medium | high | critical")
+    agent_id: Optional[str] = None
+    claim_id: Optional[str] = None
+    message: str
+    metadata: dict = Field(default_factory=dict)
+    acknowledged: bool = False
+    created_at: Optional[datetime] = None
+
+
 # ── Domain Configuration ──
 
 class DomainConfig(BaseModel):

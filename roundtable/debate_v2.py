@@ -24,6 +24,7 @@ from roundtable.models import (
     UserInterrupt, ConsensusSnapshot, AgreementLevel,
     StructuredDebateResult, EvidencePacket,
 )
+from roundtable.sentinel import HallucinationDetector, get_circuit_breaker
 from roundtable import db
 
 logger = logging.getLogger("roundtable.debate_v2")
@@ -124,6 +125,7 @@ class DebateEngineV2:
     def __init__(self, provider=None):
         self.provider = provider
         self._event_seq = 0
+        self._hallucination_detector = HallucinationDetector()
 
     # ── Public API ──
 

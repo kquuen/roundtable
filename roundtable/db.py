@@ -244,6 +244,37 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_debate_events_seq ON debate_events(session_id, sequence_num);
         CREATE INDEX IF NOT EXISTS idx_interrupts_session ON user_interrupts(session_id);
         CREATE INDEX IF NOT EXISTS idx_consensus_session ON consensus_snapshots(session_id);
+
+        CREATE TABLE IF NOT EXISTS agent_health (
+            agent_id    TEXT PRIMARY KEY,
+            status      TEXT NOT NULL DEFAULT 'healthy',
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            circuit_state TEXT NOT NULL DEFAULT 'closed',
+            total_hallucinations INTEGER NOT NULL DEFAULT 0,
+            avg_confidence REAL NOT NULL DEFAULT 0.0,
+            last_failure_at TEXT,
+            last_success_at TEXT,
+            updated_at  TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sentinel_alerts (
+            alert_id    TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            alert_type  TEXT NOT NULL,
+            severity    TEXT NOT NULL DEFAULT 'low',
+            agent_id    TEXT,
+            claim_id    TEXT,
+            message     TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            acknowledged INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_alerts_session ON sentinel_alerts(session_id);
+        CREATE INDEX IF NOT EXISTS idx_alerts_type ON sentinel_alerts(alert_type);
+        CREATE INDEX IF NOT EXISTS idx_alerts_severity ON sentinel_alerts(severity);
         """
     )
     conn.commit()
@@ -755,6 +786,154 @@ def get_consensus_snapshots(session_id: str) -> list[dict]:
             d["dimension_scores"] = _from_json(d.pop("dimension_scores_json", "{}"), {})
             result.append(d)
         return result
+    finally:
+        conn.close()
+
+
+# ── Users CRUD ──
+
+# ── Agent Health CRUD ──
+
+def upsert_agent_health(agent_id: str, status: str = "", failure_delta: int = 0,
+                        success_delta: int = 0, circuit_state: str = "",
+                        hallucination_delta: int = 0, confidence: float = 0.0) -> None:
+    conn = _get_conn()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        # Try update first
+        updates = ["updated_at = ?"]
+        params = [now]
+        if status:
+            updates.append("status = ?")
+            params.append(status)
+        if failure_delta:
+            updates.append("failure_count = failure_count + ?")
+            params.append(failure_delta)
+            updates.append("last_failure_at = ?")
+            params.append(now)
+        if success_delta:
+            updates.append("success_count = success_count + ?")
+            params.append(success_delta)
+            updates.append("last_success_at = ?")
+            params.append(now)
+        if circuit_state:
+            updates.append("circuit_state = ?")
+            params.append(circuit_state)
+        if hallucination_delta:
+            updates.append("total_hallucinations = total_hallucinations + ?")
+            params.append(hallucination_delta)
+        if confidence > 0:
+            # Weighted moving average for confidence
+            updates.append("avg_confidence = (avg_confidence * (success_count + failure_count - 1) + ?) / MAX(1, success_count + failure_count)")
+            params.append(confidence)
+        params.append(agent_id)
+
+        cur = conn.execute(
+            f"UPDATE agent_health SET {', '.join(updates)} WHERE agent_id = ?",
+            params,
+        )
+        if cur.rowcount == 0:
+            # Insert new
+            conn.execute(
+                """INSERT INTO agent_health (agent_id, status, failure_count, success_count,
+                     circuit_state, total_hallucinations, avg_confidence, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (agent_id, status or "healthy", failure_delta, success_delta,
+                 circuit_state or "closed", hallucination_delta, confidence, now),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_agent_health(agent_id: str) -> dict | None:
+    conn = _get_conn()
+    try:
+        row = conn.execute("SELECT * FROM agent_health WHERE agent_id = ?", (agent_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_agent_health() -> list[dict]:
+    conn = _get_conn()
+    try:
+        rows = conn.execute("SELECT * FROM agent_health ORDER BY updated_at DESC").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def reset_agent_health(agent_id: str) -> None:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """UPDATE agent_health SET status='healthy', failure_count=0, success_count=0,
+                 circuit_state='closed', total_hallucinations=0, avg_confidence=0.0,
+                 last_failure_at=NULL, updated_at=? WHERE agent_id = ?""",
+            (datetime.now(timezone.utc).isoformat(), agent_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Sentinel Alerts CRUD ──
+
+def insert_sentinel_alert(alert_id: str, session_id: str, alert_type: str,
+                          severity: str, agent_id: str | None, claim_id: str | None,
+                          message: str, metadata: dict | None = None) -> None:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """INSERT INTO sentinel_alerts (alert_id, session_id, alert_type, severity,
+                 agent_id, claim_id, message, metadata_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (alert_id, session_id, alert_type, severity, agent_id, claim_id,
+             message, _to_json(metadata or {}), datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_sentinel_alerts(session_id: str | None = None, severity: str | None = None,
+                        limit: int = 100) -> list[dict]:
+    conn = _get_conn()
+    try:
+        conditions = []
+        params = []
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+        if severity:
+            conditions.append("severity = ?")
+            params.append(severity)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = conn.execute(
+            f"SELECT * FROM sentinel_alerts {where} ORDER BY created_at DESC LIMIT ?",
+            (*params, limit),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["metadata"] = _from_json(d.pop("metadata_json", "{}"), {})
+            d["acknowledged"] = bool(d["acknowledged"])
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+def acknowledge_alert(alert_id: str) -> bool:
+    conn = _get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE sentinel_alerts SET acknowledged = 1 WHERE alert_id = ?",
+            (alert_id,),
+        )
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
 
