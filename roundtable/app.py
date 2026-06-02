@@ -86,6 +86,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Agent registry sync failed: %s", e)
 
+    # Pre-seed admin account if configured
+    try:
+        from roundtable.auth import ensure_admin_user
+        admin_token = ensure_admin_user()
+        if admin_token:
+            logger.info(
+                "Admin account ready. Pre-generated token (first 20 chars): %s...",
+                admin_token[:20],
+            )
+    except Exception as e:
+        logger.warning("Admin pre-seed failed: %s", e)
+
     yield
 
 

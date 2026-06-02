@@ -119,6 +119,10 @@ async def require_quota(
     Args:
         cost: How many quota units this operation consumes (default 1 = 1 session).
     """
+    # Admin users bypass quota checks
+    if getattr(user, "is_admin", False):
+        return user
+
     user = _maybe_reset_quota(user)
 
     remaining = user.monthly_quota - user.monthly_used

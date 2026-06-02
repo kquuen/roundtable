@@ -9,6 +9,7 @@ Provides:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import uuid
@@ -20,6 +21,8 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field, field_validator
 import json as _json
+
+logger = logging.getLogger("roundtable.auth")
 
 from roundtable.db import (
     init_db, create_user, get_user_by_username, get_user_by_id,
@@ -272,6 +275,44 @@ def get_user_store() -> UserStore:
     if _user_store is None:
         _user_store = UserStore()
     return _user_store
+
+
+# ── Pre-seed admin account ──
+
+def ensure_admin_user() -> Optional[str]:
+    """If ADMIN_USERNAME and ADMIN_PASSWORD are set, ensure the user exists.
+
+    Returns the JWT access token for the pre-seeded admin, or None if not configured.
+    """
+    from roundtable.settings import get_settings
+    settings = get_settings()
+    username = settings.admin_username.strip().lower()
+    password = settings.admin_password
+    if not username or not password:
+        return None
+
+    store = get_user_store()
+    user = store.get_by_username(username)
+    if user is None:
+        # Create admin user with high quota / pro plan
+        email = settings.admin_email or f"{username}@roundtable.local"
+        user_id = f"u_admin_{uuid.uuid4().hex[:8]}"
+        create_user(
+            user_id=user_id,
+            username=username,
+            email=email,
+            hashed_password=_hash_password(password),
+            custom_keys={},
+            monthly_quota=99999,
+            monthly_used=0,
+        )
+        logger.info("Pre-seeded admin user '%s' created (user_id=%s)", username, user_id)
+    else:
+        user_id = user.user_id
+        logger.info("Pre-seeded admin user '%s' already exists (user_id=%s)", username, user_id)
+
+    token = _create_access_token(user_id, username)
+    return token
 
 
 # ── FastAPI dependency ──

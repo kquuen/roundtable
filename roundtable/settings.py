@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     jwt_expire_hours: int = 168  # 7 days
     jwt_algorithm: str = "HS256"
     admin_users: str = ""  # Comma-separated list of admin usernames
+    admin_username: str = ""  # Pre-seed admin account username (e.g. mimo)
+    admin_password: str = ""  # Pre-seed admin account password (plain text, env only)
+    admin_email: str = "admin@roundtable.local"  # Pre-seed admin email
 
     # ── Provider fallback preferences ──
     debate_provider_fallbacks: str = (
@@ -46,7 +49,10 @@ class Settings(BaseSettings):
 
     @property
     def admin_user_list(self) -> List[str]:
-        return [u.strip() for u in self.admin_users.split(",") if u.strip()]
+        base = [u.strip() for u in self.admin_users.split(",") if u.strip()]
+        if self.admin_username:
+            base.append(self.admin_username.strip().lower())
+        return base
 
     @property
     def debate_provider_fallback_list(self) -> List[str]:
