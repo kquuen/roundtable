@@ -53,6 +53,7 @@ class User(BaseModel):
     trial_expires_at: Optional[str] = None
     subscription_status: str = "active"
     quota_reset_at: Optional[str] = None
+    is_admin: bool = False
 
 
 class UserInDB(User):
@@ -64,6 +65,7 @@ class UserInDB(User):
     trial_expires_at: Optional[str] = None
     subscription_status: str = "active"
     quota_reset_at: Optional[str] = None
+    is_admin: bool = False
 
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
@@ -172,9 +174,13 @@ class UserStore:
 
     @staticmethod
     def _row_to_user(row: dict) -> UserInDB:
+        from roundtable.settings import get_settings
+        settings = get_settings()
+        username = row.get("username", "")
+        is_admin = username in settings.admin_user_list
         return UserInDB(
             user_id=row["user_id"],
-            username=row["username"],
+            username=username,
             email=row["email"],
             created_at=datetime.fromisoformat(row["created_at"]),
             hashed_password=row["hashed_password"],
@@ -185,6 +191,7 @@ class UserStore:
             trial_expires_at=row.get("trial_expires_at"),
             subscription_status=row.get("subscription_status", "active"),
             quota_reset_at=row.get("quota_reset_at"),
+            is_admin=is_admin,
         )
 
     def get_by_username(self, username: str) -> Optional[UserInDB]:
@@ -227,6 +234,7 @@ class UserStore:
             trial_expires_at=None,
             subscription_status="active",
             quota_reset_at=None,
+            is_admin=False,
         )
 
     def authenticate(self, username: str, password: str) -> Optional[User]:
@@ -247,6 +255,7 @@ class UserStore:
             trial_expires_at=user.trial_expires_at,
             subscription_status=user.subscription_status,
             quota_reset_at=user.quota_reset_at,
+            is_admin=getattr(user, "is_admin", False),
         )
 
     def _save(self) -> None:

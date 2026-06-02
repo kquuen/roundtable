@@ -150,3 +150,146 @@ function copyReport(){navigator.clipboard.writeText(state.reportMarkdown).then(f
 function downloadReport(){var b=new Blob([state.reportMarkdown],{type:'text/markdown'});var u=URL.createObjectURL(b);var a=document.createElement('a');a.href=u;a.download='roundtable-'+state.sessionId+'.md';a.click();URL.revokeObjectURL(u)}
 
 /* ═══ LOADING ═══ */
+
+
+/* ═══════════════════════════════════════════
+   DEBATE THEATER V2
+   ═══════════════════════════════════════════ */
+
+let _currentInterruptType='question';
+
+function setInterruptType(type){
+  _currentInterruptType=type;
+  document.querySelectorAll('#interruptBar .btn-ghost').forEach(function(b){
+    b.style.borderColor='';
+    b.style.background='';
+  });
+  const activeBtn=Array.from(document.querySelectorAll('#interruptBar .btn-ghost')).find(function(b){
+    return b.getAttribute('onclick')&&b.getAttribute('onclick').includes(type);
+  });
+  if(activeBtn){
+    activeBtn.style.borderColor='var(--accent)';
+    activeBtn.style.background='var(--accent-soft)';
+  }
+}
+
+async function sendInterrupt(){
+  const input=document.getElementById('interruptInput');
+  if(!input||!input.value.trim()){showToast('请输入插话内容','warning');return}
+  if(!state.sessionId){showToast('会话不存在','error');return}
+  try{
+    const r=await apiFetch(API+'/session/'+encodeURIComponent(state.sessionId)+'/interrupt',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        session_id:state.sessionId,
+        interrupt_type:_currentInterruptType,
+        content:input.value.trim(),
+        target_agent_id:''
+      })
+    });
+    if(!r.ok){const e=await r.json();throw new Error(e.detail||e.error||'发送失败')}
+    showToast('插话已发送','success');
+    input.value='';
+    // Refresh debate events
+    setTimeout(function(){loadDebateEventsV2()},800);
+  }catch(err){showToast('插话失败: '+err.message,'error')}
+}
+
+async function loadDebateEventsV2(){
+  if(!state.sessionId)return;
+  try{
+    const r=await apiFetch(API+'/session/'+encodeURIComponent(state.sessionId)+'/events?limit=500');
+    if(!r.ok)return;
+    const d=await r.json();
+    const events=d.events||[];
+    if(!events.length)return;
+    renderDebateV2(events);
+  }catch(e){console.log('load debate events failed',e)}
+}
+
+function renderDebateV2(events){
+  // Show V2 UI, hide V1 columns
+  const timeline=document.getElementById('debateTimeline');
+  const v2Steps=document.getElementById('debateV2Steps');
+  const v1Cols=document.querySelector('.debate-columns');
+  const interruptBar=document.getElementById('interruptBar');
+  const scoreBlock=document.getElementById('consensusScoreBlock');
+  if(timeline)timeline.style.display='block';
+  if(v2Steps)v2Steps.style.display='flex';
+  if(v1Cols)v1Cols.style.display='none';
+  if(interruptBar)interruptBar.style.display='block';
+  if(scoreBlock)scoreBlock.style.display='block';
+
+  // Group events by step_type
+  const byStep={statement:[],challenge:[],new_perspective:[],consensus:[],response:[]};
+  let scores={};
+  events.forEach(function(ev){
+    const meta=ev.metadata||{};
+    const type=ev.event_type||meta.step_type||'';
+    if(byStep[type])byStep[type].push(ev);
+    if(meta.dimension_scores){scores=meta.dimension_scores;}
+  });
+
+  // Update timeline dots
+  document.querySelectorAll('.timeline-step').forEach(function(s){
+    const step=s.dataset.step;
+    const has=byStep[step]&&byStep[step].length>0;
+    s.classList.toggle('done',has);
+    s.classList.toggle('active',has);
+  });
+
+  // Render step cards
+  renderV2StepCards('v2StatementCards',byStep.statement,'statement');
+  renderV2StepCards('v2ChallengeCards',byStep.challenge,'challenge');
+  renderV2StepCards('v2PerspectiveCards',byStep.new_perspective,'new_perspective');
+  renderV2StepCards('v2ConsensusCards',byStep.consensus,'consensus');
+
+  // Render consensus scores
+  renderConsensusScores(scores);
+}
+
+function renderV2StepCards(containerId,list,stepType){
+  const container=document.getElementById(containerId);
+  if(!container)return;
+  if(!list||!list.length){container.innerHTML='<div class="empty-state">暂无数据</div>';return}
+  container.innerHTML=list.map(function(ev,idx){
+    const meta=ev.metadata||{};
+    const agent=ev.agent_id||meta.agent_id||'agent';
+    const content=ev.content||meta.content||'';
+    const cls=stepType==='challenge'?'agent-challenge':stepType==='new_perspective'?'agent-perspective':stepType==='consensus'?'agent-consensus':'';
+    return'<div class="debate-v2-card '+cls+'">'+
+      '<div class="debate-v2-head"><span>'+escHtml(agent)+'</span><span>#'+(idx+1)+'</span></div>'+
+      '<div class="debate-v2-content">'+escHtml(content)+'</div>'+
+      '</div>';
+  }).join('');
+}
+
+function renderConsensusScores(scores){
+  const container=document.getElementById('consensusScores');
+  if(!container)return;
+  const entries=Object.entries(scores||{});
+  if(!entries.length){container.innerHTML='<div class="empty-state">暂无评分数据</div>';return}
+  container.innerHTML=entries.map(function(e){
+    const label=e[0];
+    const val=Math.max(0,Math.min(100,Math.round((e[1]||0)*100)));
+    return'<div class="consensus-score-row">'+
+      '<div class="consensus-score-label">'+escHtml(label)+'</div>'+
+      '<div class="consensus-score-bar"><div class="consensus-score-fill" style="width:'+val+'%"></div></div>'+
+      '<div class="consensus-score-val">'+val+'%</div>'+
+      '</div>';
+  }).join('');
+}
+
+function scrollToDebateStep(stepType){
+  const id='v2-'+stepType;
+  const el=document.getElementById(id);
+  if(el)el.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+// Override renderDebatePanel to support V2
+const _origRenderDebatePanel=renderDebatePanel;
+renderDebatePanel=function(){
+  _origRenderDebatePanel();
+  loadDebateEventsV2();
+};

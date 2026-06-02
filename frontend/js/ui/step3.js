@@ -87,7 +87,7 @@ function renderAgentGroups(data){
     groupsHtml+='</div>';
     groupsHtml+='<div class="group-agents">';
     grpAgents.forEach(function(a){
-      groupsHtml+='<span class="group-agent-tag" title="'+escHtml(a.methodology||'')+'">'+(a.emoji||'🤖')+' '+escHtml(a.name||'')+'</span>';
+      groupsHtml+='<span class="group-agent-tag" draggable="true" data-agent-id="'+escHtml(a.id||'')+'" title="'+escHtml(a.methodology||'')+'">'+(a.emoji||'🤖')+' '+escHtml(a.name||'')+'</span>';
     });
     groupsHtml+='</div>';
     if(grp.rationale){
@@ -104,6 +104,9 @@ function renderAgentGroups(data){
   }
 
   container.innerHTML=kwHtml+agentsHtml+groupsHtml+ungroupedHtml;
+
+  // Bind drag events
+  bindGroupDragEvents();
 
   // Auto-select first group
   if(groups.length){
@@ -148,3 +151,109 @@ async function confirmTeam(){
 }
 
 /* Compatibility: if old renderTeams is called with V1 shape, still works */
+
+
+/* ═══════════════════════════════════════════
+   DRAG & DROP — Agent group adjustment
+   ═══════════════════════════════════════════ */
+
+function bindGroupDragEvents(){
+  document.querySelectorAll('.group-agent-tag').forEach(function(tag){
+    tag.addEventListener('dragstart',onAgentDragStart);
+  });
+  document.querySelectorAll('.group-card').forEach(function(card){
+    card.addEventListener('dragover',onAgentDragOver);
+    card.addEventListener('drop',onAgentDrop);
+    card.addEventListener('dragenter',function(e){e.preventDefault();card.style.borderColor='var(--accent)';});
+    card.addEventListener('dragleave',function(e){card.style.borderColor='';});
+  });
+  const ungroupedArea=document.getElementById('ungroupedArea');
+  if(ungroupedArea){
+    ungroupedArea.style.display='flex';
+    ungroupedArea.addEventListener('dragover',onAgentDragOver);
+    ungroupedArea.addEventListener('drop',onAgentDrop);
+    ungroupedArea.addEventListener('dragenter',function(e){e.preventDefault();ungroupedArea.style.borderColor='var(--accent)';});
+    ungroupedArea.addEventListener('dragleave',function(e){ungroupedArea.style.borderColor='';});
+  }
+  renderUngroupedAgents();
+}
+
+function onAgentDragStart(e){
+  const agentId=e.target.dataset.agentId;
+  if(!agentId)return;
+  e.dataTransfer.setData('text/plain',agentId);
+  e.dataTransfer.effectAllowed='move';
+  e.target.style.opacity='0.5';
+}
+
+function onAgentDragOver(e){
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+}
+
+function onAgentDrop(e){
+  e.preventDefault();
+  const agentId=e.dataTransfer.getData('text/plain');
+  if(!agentId)return;
+
+  // Find target group
+  const card=e.target.closest('.group-card');
+  const ungrouped=e.target.closest('#ungroupedArea');
+  const targetGroupId=card?card.dataset.groupId:null;
+
+  // Remove from old group
+  const data=state.agentMatchData;
+  if(!data)return;
+  let movedAgent=null;
+  data.groups=data.groups||[];
+  data.groups.forEach(function(g){
+    const idx=(g.agents||[]).findIndex(function(a){return a.id===agentId});
+    if(idx>=0){
+      movedAgent=g.agents.splice(idx,1)[0];
+    }
+  });
+
+  if(!movedAgent){
+    // Maybe from ungrouped pool
+    const allAgents=(data.matched_agents||[]).map(function(m){return m.agent;}).filter(Boolean);
+    movedAgent=allAgents.find(function(a){return a.id===agentId});
+  }
+  if(!movedAgent)return;
+
+  // Add to new group or ungrouped
+  if(targetGroupId){
+    const targetGrp=data.groups.find(function(g){return g.group_id===targetGroupId});
+    if(targetGrp){
+      targetGrp.agents=targetGrp.agents||[];
+      if(!targetGrp.agents.find(function(a){return a.id===agentId})){
+        targetGrp.agents.push(movedAgent);
+      }
+    }
+  }
+
+  // Re-render
+  renderAgentGroups(data);
+}
+
+function renderUngroupedAgents(){
+  const container=document.getElementById('ungroupedAgents');
+  if(!container)return;
+  const data=state.agentMatchData;
+  if(!data)return;
+  const allIds=new Set();
+  (data.groups||[]).forEach(function(g){
+    (g.agents||[]).forEach(function(a){if(a&&a.id)allIds.add(a.id);});
+  });
+  const allAgents=(data.matched_agents||[]).map(function(m){return m.agent;}).filter(Boolean);
+  const ungrouped=allAgents.filter(function(a){return!allIds.has(a.id);});
+  if(!ungrouped.length){
+    container.innerHTML='<span style="font-size:.72rem;color:var(--text-3);">全部专家已分组</span>';
+    return;
+  }
+  container.innerHTML=ungrouped.map(function(a){
+    return'<span class="group-agent-tag" draggable="true" data-agent-id="'+escHtml(a.id||'')+'" title="'+escHtml(a.methodology||'')+'">'+(a.emoji||'🤖')+' '+escHtml(a.name||'')+'</span>';
+  }).join('');
+  container.querySelectorAll('.group-agent-tag').forEach(function(tag){
+    tag.addEventListener('dragstart',onAgentDragStart);
+  });
+}

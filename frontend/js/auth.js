@@ -160,6 +160,12 @@
       authBtn.title = '登录 / 注册';
       authBtn.onclick = showAuthModal;
     }
+
+    // Show/hide sidebar admin link
+    const adminLink = document.getElementById('adminLink');
+    if (adminLink) {
+      adminLink.style.display = (user && user.is_admin) ? 'block' : 'none';
+    }
   };
 
 
@@ -170,8 +176,8 @@
     var dd = document.createElement('div');
     dd.id = 'user-dropdown';
     dd.style.cssText = 'position:absolute;top:40px;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:0.5rem 0;min-width:140px;z-index:9999;box-shadow:var(--shadow-lg);';
-    dd.innerHTML = '<div style="padding:0.5rem 1rem;cursor:pointer;color:var(--text-primary);" onclick="loadUserHistory();document.getElementById('user-dropdown').remove();">我的会话</div>' +
-                   '<div style="padding:0.5rem 1rem;cursor:pointer;color:var(--danger);" onclick="if(confirm('确认退出？')){setToken(null,null);updateAuthHeader();showToast('已退出','info');}document.getElementById('user-dropdown').remove();">退出登录</div>';
+    dd.innerHTML = '<div style="padding:0.5rem 1rem;cursor:pointer;color:var(--text-primary);" onclick="loadUserHistory();document.getElementById(\'user-dropdown\').remove();">我的会话</div>' +
+                   '<div style="padding:0.5rem 1rem;cursor:pointer;color:var(--danger);" onclick="if(confirm(\'确认退出？\')){setToken(null,null);updateAuthHeader();showToast(\'已退出\',\'info\');}document.getElementById(\'user-dropdown\').remove();">退出登录</div>';
     trigger.parentElement.style.position = 'relative';
     trigger.parentElement.appendChild(dd);
     document.addEventListener('click', function close(e) {
@@ -203,12 +209,12 @@
     modal.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;';
     var content = '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);max-width:480px;width:90%;max-height:70vh;overflow:auto;padding:1.5rem;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">' +
-        '<h3 style="margin:0;color:var(--text-primary);">我的会话</h3><button onclick="document.getElementById('history-modal').remove()" style="background:none;border:none;color:var(--text-secondary);font-size:1.25rem;cursor:pointer;">✕</button></div>';
+        '<h3 style="margin:0;color:var(--text-primary);">我的会话</h3><button onclick="document.getElementById(\'history-modal\').remove()" style="background:none;border:none;color:var(--text-secondary);font-size:1.25rem;cursor:pointer;">✕</button></div>';
     if (!sessions.length) {
       content += '<div style="color:var(--text-secondary);text-align:center;padding:2rem;">暂无会话</div>';
     } else {
       sessions.forEach(function(s) {
-        content += '<div style="padding:0.75rem;border:1px solid var(--border);border-radius:var(--radius-md);margin-bottom:0.5rem;cursor:pointer;" onclick="state.sessionId=''+s.session_id+'';goStep(5);document.getElementById('history-modal').remove();">' +
+        content += '<div style="padding:0.75rem;border:1px solid var(--border);border-radius:var(--radius-md);margin-bottom:0.5rem;cursor:pointer;" onclick="state.sessionId=\'\'+s.session_id+\'\';goStep(5);document.getElementById(\'history-modal\').remove();">' +
             '<div style="font-weight:500;color:var(--text-primary);">' + escHtml(s.title || '未命名会话') + '</div>' +
             '<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:0.25rem;">' + s.session_id + ' · ' + (s.status || 'unknown') + '</div>' +
             '</div>';
@@ -224,3 +230,24 @@
     updateAuthHeader();
   });
 })();
+
+// Override: admin-aware dropdown
+window.showUserDropdown = function(trigger) {
+  var existing = document.getElementById('user-dropdown');
+  if (existing) { existing.remove(); return; }
+  var user = getUser();
+  var dd = document.createElement('div');
+  dd.id = 'user-dropdown';
+  dd.style.cssText = 'position:absolute;top:40px;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:0.5rem 0;min-width:140px;z-index:9999;box-shadow:var(--shadow-lg);';
+  var items = '<div style="padding:0.5rem 1rem;cursor:pointer;color:var(--text-primary);" onclick="loadUserHistory();document.getElementById(\'user-dropdown\').remove();">我的会话</div>';
+  if (user && user.is_admin) {
+    items += '<div style="padding:0.5rem 1rem;cursor:pointer;color:var(--accent);" onclick="goAdmin();document.getElementById(\'user-dropdown\').remove();">管理后台</div>';
+  }
+  items += '<div style="padding:0.5rem 1rem;cursor:pointer;color:var(--danger);" onclick="if(confirm(\'确认退出？\')){setToken(null,null);updateAuthHeader();showToast(\'已退出\',\'info\');}document.getElementById(\'user-dropdown\').remove();">退出登录</div>';
+  dd.innerHTML = items;
+  trigger.parentElement.style.position = 'relative';
+  trigger.parentElement.appendChild(dd);
+  document.addEventListener('click', function close(e) {
+    if (!dd.contains(e.target) && e.target !== trigger) { dd.remove(); document.removeEventListener('click', close); }
+  });
+};
