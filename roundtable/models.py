@@ -215,6 +215,56 @@ class SkillManifest(BaseModel):
     output_schema: str = "AgentReview"
 
 
+# ── Agent Registry (V2) ──
+
+class AgentManifest(BaseModel):
+    """Agent registration entry from config/agents/registry.json."""
+    id: str = Field(description="Unique agent identifier, e.g. product_manager")
+    name: str = Field(description="Display name, e.g. 产品经理")
+    emoji: str = Field(default="🤖", description="Visual identifier")
+    role: str = Field(default="", description="Functional role, e.g. product_analysis")
+    domains: List[str] = Field(default_factory=list, description="Expertise domains")
+    keywords: List[str] = Field(default_factory=list, description="Matching keywords")
+    methodology: str = Field(default="", description="Analytical methodology description")
+    score_dimension: str = Field(default="", description="Primary scoring dimension")
+    can_challenge: List[str] = Field(default_factory=list, description="Agent IDs this agent can challenge")
+    must_yield_to: List[str] = Field(default_factory=list, description="Agent IDs this agent must yield to")
+    max_words: int = Field(default=800, ge=50, le=2000)
+    min_words: int = Field(default=150, ge=20, le=500)
+    forbidden_topics: List[str] = Field(default_factory=list)
+    required_output_fields: List[str] = Field(default_factory=list)
+    is_active: bool = Field(default=True)
+
+
+class AgentMatchResult(BaseModel):
+    """Result of matching a single agent against user input."""
+    agent: AgentManifest
+    match_score: float = Field(ge=0.0, le=1.0, description="Jaccard similarity score")
+    matched_keywords: List[str] = Field(default_factory=list)
+    methodology_bonus: float = Field(default=0.0, description="Extra score from methodology match")
+    final_score: float = Field(ge=0.0, le=1.0, description="match_score + methodology_bonus, capped at 1.0")
+    reason: str = Field(default="", description="Human-readable match explanation")
+
+
+class AgentGroup(BaseModel):
+    """A group of agents assigned to debate a specific topic."""
+    group_id: str = Field(description="e.g. g_001")
+    group_name: str = Field(description="e.g. 产品策略组")
+    topic: str = Field(description="What this group will debate")
+    agents: List[AgentManifest] = Field(default_factory=list)
+    rationale: str = Field(default="", description="Why these agents were grouped")
+
+
+class GroupRecommendation(BaseModel):
+    """Full recommendation response for user confirmation."""
+    session_id: str
+    input_text: str = Field(description="Original user input or transcript summary")
+    extracted_keywords: List[str] = Field(default_factory=list)
+    matched_agents: List[AgentMatchResult] = Field(default_factory=list)
+    groups: List[AgentGroup] = Field(default_factory=list)
+    ungrouped_reason: str = Field(default="", description="Why some agents were excluded")
+
+
 # ── Review ──
 
 class ReviewResult(str, Enum):

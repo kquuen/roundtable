@@ -48,13 +48,31 @@ async function uploadEvidence(){
     const evidence=await r.json();
     const storedSegments=evidence.segments||segments;
     showLoading('Analyzing content...');
-    const t=await apiFetch(API+'/team/recommend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.sessionId,segments:storedSegments})});
-    if(!t.ok){
-      let msg='Team recommend failed';
-      try{const e=await t.json();msg=e.detail||e.error||msg}catch{}
-      throw new Error(msg);
+
+    // Try V2 agent matching first
+    let usedV2=false;
+    try{
+      const textSummary=storedSegments.map(function(s){return s.text}).join(' ').slice(0,2000);
+      const m=await apiFetch(API+'/agents/match',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input_text:textSummary,session_id:state.sessionId})});
+      if(m.ok){
+        const matchData=await m.json();
+        renderAgentGroups(matchData);
+        usedV2=true;
+      }
+    }catch(e){
+      console.warn('V2 agent match failed, falling back to V1',e);
     }
-    renderTeams(await t.json());
+
+    if(!usedV2){
+      const t=await apiFetch(API+'/team/recommend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.sessionId,segments:storedSegments})});
+      if(!t.ok){
+        let msg='Team recommend failed';
+        try{const e=await t.json();msg=e.detail||e.error||msg}catch{}
+        throw new Error(msg);
+      }
+      renderTeams(await t.json());
+    }
+
     hideLoading();
     fetchInterview();
   }catch(e){

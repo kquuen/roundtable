@@ -13,6 +13,7 @@ from roundtable.routers.review import router as review_router
 from roundtable.routers.voice import router as voice_router
 from roundtable.routers.debate_rt import router as debate_rt_router
 from roundtable.routers.system import router as system_router
+from roundtable.routers.agents import router as agents_router
 
 __all__ = [
     "auth_router",
@@ -25,4 +26,5 @@ __all__ = [
     "voice_router",
     "debate_rt_router",
     "system_router",
+    "agents_router",
 ]

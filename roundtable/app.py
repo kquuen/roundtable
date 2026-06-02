@@ -48,6 +48,7 @@ from roundtable.routers import (
     voice_router,
     debate_rt_router,
     system_router,
+    agents_router,
 )
 from roundtable.routers.voice import (
     MAX_VOICE_CONCURRENT,
@@ -75,6 +76,14 @@ async def lifespan(app: FastAPI):
     yaml_loaded = load_from_directory()
     if yaml_loaded:
         logger.info("Loaded %d YAML skills from skills/", yaml_loaded)
+
+    # Sync agent registry V2 to DB
+    try:
+        from roundtable.routers.agents import _sync_registry_to_db
+        synced = _sync_registry_to_db()
+        logger.info("Synced %d agents from registry.json to DB", synced)
+    except Exception as e:
+        logger.warning("Agent registry sync failed: %s", e)
 
     yield
 
@@ -128,6 +137,7 @@ app.include_router(review_router)
 app.include_router(voice_router)
 app.include_router(debate_rt_router)
 app.include_router(system_router)
+app.include_router(agents_router)
 
 # ── 前端 SPA fallback（必须在所有 API 路由之后） ──
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
