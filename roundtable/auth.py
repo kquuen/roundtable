@@ -49,6 +49,10 @@ class User(BaseModel):
     custom_keys: dict = Field(default_factory=dict)
     monthly_quota: int = 50000
     monthly_used: int = 0
+    plan: str = "free"
+    trial_expires_at: Optional[str] = None
+    subscription_status: str = "active"
+    quota_reset_at: Optional[str] = None
 
 
 class UserInDB(User):
@@ -56,6 +60,10 @@ class UserInDB(User):
     custom_keys: dict = Field(default_factory=dict)
     monthly_quota: int = 50000
     monthly_used: int = 0
+    plan: str = "free"
+    trial_expires_at: Optional[str] = None
+    subscription_status: str = "active"
+    quota_reset_at: Optional[str] = None
 
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
@@ -173,6 +181,10 @@ class UserStore:
             custom_keys=_db_from_json(row.get("custom_keys"), {}),
             monthly_quota=row.get("monthly_quota", 50000),
             monthly_used=row.get("monthly_used", 0),
+            plan=row.get("plan", "free"),
+            trial_expires_at=row.get("trial_expires_at"),
+            subscription_status=row.get("subscription_status", "active"),
+            quota_reset_at=row.get("quota_reset_at"),
         )
 
     def get_by_username(self, username: str) -> Optional[UserInDB]:
@@ -209,8 +221,12 @@ class UserStore:
             email=email,
             created_at=now,
             custom_keys={},
-            monthly_quota=50000,
+            monthly_quota=3,
             monthly_used=0,
+            plan="free",
+            trial_expires_at=None,
+            subscription_status="active",
+            quota_reset_at=None,
         )
 
     def authenticate(self, username: str, password: str) -> Optional[User]:
@@ -227,6 +243,10 @@ class UserStore:
             custom_keys=user.custom_keys,
             monthly_quota=user.monthly_quota,
             monthly_used=user.monthly_used,
+            plan=user.plan,
+            trial_expires_at=user.trial_expires_at,
+            subscription_status=user.subscription_status,
+            quota_reset_at=user.quota_reset_at,
         )
 
     def _save(self) -> None:
@@ -288,6 +308,10 @@ async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> Opt
         custom_keys=user.custom_keys,
         monthly_quota=user.monthly_quota,
         monthly_used=user.monthly_used,
+        plan=user.plan,
+        trial_expires_at=user.trial_expires_at,
+        subscription_status=user.subscription_status,
+        quota_reset_at=user.quota_reset_at,
     )
 
 

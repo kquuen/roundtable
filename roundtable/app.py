@@ -49,6 +49,7 @@ from roundtable.routers import (
     debate_rt_router,
     system_router,
     agents_router,
+    payment_router,
 )
 from roundtable.routers.voice import (
     MAX_VOICE_CONCURRENT,
@@ -138,6 +139,7 @@ app.include_router(voice_router)
 app.include_router(debate_rt_router)
 app.include_router(system_router)
 app.include_router(agents_router)
+app.include_router(payment_router)
 
 # ── 前端 SPA fallback（必须在所有 API 路由之后） ──
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"

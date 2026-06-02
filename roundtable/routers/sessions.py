@@ -12,6 +12,11 @@ from pydantic import BaseModel, Field
 
 from roundtable.auth import User, require_user
 from roundtable.dependencies import get_store, get_reports, require_session_owner
+from roundtable.billing import require_quota, consume_quota, require_export_permission
+from roundtable.export import generate_pdf_report
+from roundtable.models import AgentReview, SupervisorReview
+from roundtable.report import ReviewResult
+from fastapi.responses import StreamingResponse
 from roundtable.evidence import build_evidence_packet
 from roundtable.models import SessionStatus
 from roundtable.team import classify_session, recommend_teams
@@ -36,9 +41,10 @@ class UploadTextEvidenceRequest(BaseModel):
 
 
 @router.post("/session/create", status_code=201)
-async def create_session(req: CreateSessionRequest, user: User = Depends(require_user)):
+async def create_session(req: CreateSessionRequest, user: User = Depends(require_quota)):
     """Create a new analysis session (persisted to disk)."""
     session = get_store().create(title=req.title, mode=req.mode, created_by=user.username if user else "anonymous")
+    consume_quota(user.user_id, cost=1, action="create_session", session_id=session.session_id)
     return session.model_dump()
 
 
@@ -280,3 +286,52 @@ async def post_interrupt(session_id: str, req: InterruptRequest, user: User = De
         "session_id": session_id,
         "status": "recorded",
     }
+
+
+
+# ── Report Export ──
+
+class ExportRequest(BaseModel):
+    format: str = Field(default="pdf", pattern="^(pdf|markdown)$")
+    lang: str = "zh"
+
+
+@router.post("/session/{session_id}/export")
+async def export_session_report(
+    session_id: str,
+    req: ExportRequest,
+    user: User = Depends(require_user),
+):
+    """Export session report as PDF or Markdown."""
+    require_session_owner(session_id, user)
+
+    if req.format == "pdf":
+        require_export_permission(user)
+
+    # Retrieve stored reviews
+    ar_dicts, sr_dicts = get_store().get_reviews(session_id)
+    if not ar_dicts:
+        raise HTTPException(404, "No reviews found for this session — run analysis first")
+
+    agent_reviews = [AgentReview(**d) for d in ar_dicts]
+    supervisor_reviews = [SupervisorReview(**d) for d in sr_dicts]
+    session = get_store().get(session_id)
+    title = session.title if session else ""
+
+    if req.format == "markdown":
+        from roundtable.report import compose_report
+        md = compose_report(agent_reviews, supervisor_reviews, title, req.lang)
+        return {
+            "session_id": session_id,
+            "format": "markdown",
+            "content": md,
+        }
+
+    # PDF
+    pdf_bytes = generate_pdf_report(agent_reviews, supervisor_reviews, title, req.lang)
+    from io import BytesIO
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=roundtable_{session_id}.pdf"},
+    )

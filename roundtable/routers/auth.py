@@ -87,14 +87,23 @@ async def delete_api_key(provider: str, user: User = Depends(require_user)):
 
 @user_router.get("/usage")
 async def get_usage(user: User = Depends(require_user)):
-    store = get_user_store()
-    db_user = store.get_by_id(user.user_id)
-    if not db_user:
-        raise HTTPException(404, "User not found")
+    from roundtable.billing import get_user_usage_info
+    return get_user_usage_info(user.user_id)
+
+
+@user_router.get("/plan")
+async def get_plan(user: User = Depends(require_user)):
+    from roundtable.billing import get_user_usage_info, get_plan_limits
+    info = get_user_usage_info(user.user_id)
     return {
-        "monthly_quota": db_user.monthly_quota,
-        "monthly_used": db_user.monthly_used,
-        "remaining": max(0, db_user.monthly_quota - db_user.monthly_used),
+        "plan": info["plan"],
+        "limits": info["limits"],
+        "subscription_status": info["subscription_status"],
+        "trial_expires_at": info["trial_expires_at"],
+        "quota_reset_at": info["quota_reset_at"],
+        "monthly_used": info["monthly_used"],
+        "monthly_quota": info["monthly_quota"],
+        "remaining": info["remaining"],
     }
 
 

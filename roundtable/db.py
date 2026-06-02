@@ -46,6 +46,10 @@ def init_db() -> None:
         _add_column_if_missing(conn, "users", "custom_keys", "TEXT NOT NULL DEFAULT '{}'")
         _add_column_if_missing(conn, "users", "monthly_quota", "INTEGER NOT NULL DEFAULT 50000")
         _add_column_if_missing(conn, "users", "monthly_used", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "users", "plan", "TEXT NOT NULL DEFAULT 'free'")
+        _add_column_if_missing(conn, "users", "trial_expires_at", "TEXT")
+        _add_column_if_missing(conn, "users", "subscription_status", "TEXT NOT NULL DEFAULT 'active'")
+        _add_column_if_missing(conn, "users", "quota_reset_at", "TEXT")
         _add_column_if_missing(conn, "memories", "created_at", "TEXT")
         _add_column_if_missing(conn, "memories", "updated_at", "TEXT")
     finally:
@@ -275,6 +279,37 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_alerts_session ON sentinel_alerts(session_id);
         CREATE INDEX IF NOT EXISTS idx_alerts_type ON sentinel_alerts(alert_type);
         CREATE INDEX IF NOT EXISTS idx_alerts_severity ON sentinel_alerts(severity);
+
+        CREATE TABLE IF NOT EXISTS orders (
+            order_id    TEXT PRIMARY KEY,
+            user_id     TEXT NOT NULL,
+            plan        TEXT NOT NULL,
+            amount_cents INTEGER NOT NULL,
+            currency    TEXT NOT NULL DEFAULT 'CNY',
+            provider    TEXT NOT NULL DEFAULT '',
+            provider_order_id TEXT,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            paid_at     TEXT,
+            activated_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS usage_logs (
+            log_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     TEXT NOT NULL,
+            session_id  TEXT,
+            action      TEXT NOT NULL,
+            tokens_used INTEGER NOT NULL DEFAULT 0,
+            cost_cents  INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
+        CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+        CREATE INDEX IF NOT EXISTS idx_usage_logs_user ON usage_logs(user_id);
+        CREATE INDEX IF NOT EXISTS idx_usage_logs_session ON usage_logs(session_id);
         """
     )
     conn.commit()
@@ -948,3 +983,179 @@ def list_all_users() -> list[dict]:
     finally:
         conn.close()
 
+
+
+# ── Billing / Subscription CRUD ──
+
+def update_user_plan(user_id: str, plan: str, trial_expires_at: str | None = None,
+                     subscription_status: str = "", quota_reset_at: str | None = None,
+                     monthly_quota: int | None = None) -> None:
+    conn = _get_conn()
+    try:
+        fields = []
+        params = []
+        if plan:
+            fields.append("plan = ?")
+            params.append(plan)
+        if trial_expires_at is not None:
+            fields.append("trial_expires_at = ?")
+            params.append(trial_expires_at)
+        if subscription_status:
+            fields.append("subscription_status = ?")
+            params.append(subscription_status)
+        if quota_reset_at is not None:
+            fields.append("quota_reset_at = ?")
+            params.append(quota_reset_at)
+        if monthly_quota is not None:
+            fields.append("monthly_quota = ?")
+            params.append(monthly_quota)
+        if not fields:
+            return
+        params.append(user_id)
+        conn.execute(
+            f"UPDATE users SET {', '.join(fields)} WHERE user_id = ?",
+            params,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def reset_monthly_usage(user_id: str, monthly_quota: int) -> None:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "UPDATE users SET monthly_used = 0, monthly_quota = ?, quota_reset_at = ? WHERE user_id = ?",
+            (monthly_quota, datetime.now(timezone.utc).isoformat(), user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Orders CRUD ──
+
+def insert_order(order_id: str, user_id: str, plan: str, amount_cents: int,
+                 currency: str, provider: str, metadata: dict | None = None) -> None:
+    conn = _get_conn()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """INSERT INTO orders (order_id, user_id, plan, amount_cents, currency,
+                 provider, metadata_json, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (order_id, user_id, plan, amount_cents, currency, provider,
+             _to_json(metadata or {}), "pending", now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_order(order_id: str) -> dict | None:
+    conn = _get_conn()
+    try:
+        row = conn.execute("SELECT * FROM orders WHERE order_id = ?", (order_id,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["metadata"] = _from_json(d.pop("metadata_json", "{}"), {})
+        return d
+    finally:
+        conn.close()
+
+
+def update_order_status(order_id: str, status: str, provider_order_id: str | None = None,
+                        paid_at: str | None = None, activated_at: str | None = None) -> bool:
+    conn = _get_conn()
+    try:
+        fields = ["status = ?", "updated_at = ?"]
+        params = [status, datetime.now(timezone.utc).isoformat()]
+        if provider_order_id is not None:
+            fields.append("provider_order_id = ?")
+            params.append(provider_order_id)
+        if paid_at is not None:
+            fields.append("paid_at = ?")
+            params.append(paid_at)
+        if activated_at is not None:
+            fields.append("activated_at = ?")
+            params.append(activated_at)
+        params.append(order_id)
+        cur = conn.execute(
+            f"UPDATE orders SET {', '.join(fields)} WHERE order_id = ?",
+            params,
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def list_orders(user_id: str, limit: int = 50) -> list[dict]:
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["metadata"] = _from_json(d.pop("metadata_json", "{}"), {})
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+# ── Usage Logs CRUD ──
+
+def insert_usage_log(user_id: str, action: str, session_id: str | None = None,
+                     tokens_used: int = 0, cost_cents: int = 0) -> int:
+    conn = _get_conn()
+    try:
+        cur = conn.execute(
+            """INSERT INTO usage_logs (user_id, session_id, action, tokens_used, cost_cents, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (user_id, session_id, action, tokens_used, cost_cents,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+        return cur.lastrowid or 0
+    finally:
+        conn.close()
+
+
+def get_usage_logs(user_id: str, limit: int = 100) -> list[dict]:
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM usage_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_monthly_usage_summary(user_id: str) -> dict:
+    conn = _get_conn()
+    try:
+        # Current month
+        now = datetime.now(timezone.utc)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        row = conn.execute(
+            """SELECT COALESCE(SUM(tokens_used), 0) as total_tokens,
+                      COALESCE(SUM(cost_cents), 0) as total_cost_cents,
+                      COUNT(*) as action_count
+               FROM usage_logs
+               WHERE user_id = ? AND created_at >= ?""",
+            (user_id, month_start),
+        ).fetchone()
+        return {
+            "total_tokens": row["total_tokens"] if row else 0,
+            "total_cost_cents": row["total_cost_cents"] if row else 0,
+            "action_count": row["action_count"] if row else 0,
+        }
+    finally:
+        conn.close()

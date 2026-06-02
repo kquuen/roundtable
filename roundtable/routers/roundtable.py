@@ -11,6 +11,7 @@ from roundtable.auth import User, require_user
 from roundtable.dependencies import get_store, get_service, require_session_owner
 from roundtable.models import SessionStatus
 from roundtable.services.sse import start_sse_pipeline
+from roundtable.billing import require_quota, consume_quota
 
 logger = logging.getLogger("roundtable.routers.roundtable")
 router = APIRouter(prefix="/roundtable", tags=["roundtable"])
@@ -25,7 +26,7 @@ class RunRoundtableRequest(BaseModel):
 
 
 @router.post("/run")
-async def run_roundtable(req: RunRoundtableRequest, user: User = Depends(require_user)):
+async def run_roundtable(req: RunRoundtableRequest, user: User = Depends(require_quota)):
     """Execute a full roundtable analysis using stored evidence."""
     session = require_session_owner(req.session_id, user)
 
@@ -69,6 +70,7 @@ async def run_roundtable(req: RunRoundtableRequest, user: User = Depends(require
         agent_count=req.agent_count,
         lang=req.lang,
     )
+    consume_quota(user.user_id, cost=1, action="roundtable_run", session_id=req.session_id, tokens_used=0)
 
     if result.pending_confirmation_count > 0:
         get_store().update_status(req.session_id, SessionStatus.REVIEWING)
@@ -88,7 +90,7 @@ async def run_roundtable(req: RunRoundtableRequest, user: User = Depends(require
 
 
 @router.post("/debate")
-async def run_debate(req: RunRoundtableRequest, user: User = Depends(require_user)):
+async def run_debate(req: RunRoundtableRequest, user: User = Depends(require_quota)):
     """Execute a two-round debate analysis."""
     session = require_session_owner(req.session_id, user)
 
