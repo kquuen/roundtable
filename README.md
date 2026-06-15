@@ -1,6 +1,37 @@
 # 圆桌会议 Roundtable Meeting
 
+AI expert roundtable backend for meeting analysis and personal decision workflows. It routes a transcript or question through multiple specialist agents, runs structured debate, applies supervisor review, and exports a report.
+
+> Status: experimental product backend, actively evolving. Frontend prototype: [roundtable-frontend](https://github.com/kquuen/roundtable-frontend).
+
 面向会议内容与个人决策的 AI 专家圆桌后端。系统支持文本与语音输入、多专家并发分析、结构化辩论、审查校验、人在回路确认与报告生成。
+
+## 架构摘要
+
+```text
+Input transcript / question
+  -> Agent matcher
+  -> Parallel specialist analysis
+  -> Structured debate
+  -> Supervisor review
+  -> Human confirmation
+  -> Report export
+```
+
+## 快速启动
+
+```bash
+python -m venv .venv
+. .venv/Scripts/activate
+pip install -e .[dev]
+uvicorn roundtable.app:app --reload
+```
+
+无模型配置时可使用 mock 流程验证：
+
+```bash
+python -m roundtable.main --mock --lang zh
+```
 
 ## 核心功能
 
